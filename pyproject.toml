@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fish-async-task"
+version = "0.1.0"
+description = "纯Python实现的异步任务管理器，支持线程池和动态伸缩"
+readme = "README.md"
+requires-python = ">=3.7"
+license = "MIT"
+authors = [
+    {name = "fishzjp"}
+]
+keywords = ["async", "task", "manager", "threadpool", "queue"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/fishzjp/FishAsyncTask"
+Documentation = "https://github.com/fishzjp/FishAsyncTask#readme"
+Repository = "https://github.com/fishzjp/FishAsyncTask"
+Issues = "https://github.com/fishzjp/FishAsyncTask/issues"
+
+[tool.setuptools]
+packages = ["fish_async_task"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ['py37']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.7"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+# 逐步启用更严格的类型检查
+warn_untyped_defs = true
+warn_untyped_calls = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_optional = true
+
