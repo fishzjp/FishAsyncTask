@@ -9,7 +9,7 @@ import queue
 import time
 import uuid
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .types import TaskTuple
 
@@ -25,6 +25,10 @@ class WorkerManager:
     - 所有对worker_threads列表的操作都在threads_lock保护下进行
     - 线程退出时会从列表中安全移除，避免竞态条件
     """
+    
+    # 配置常量
+    QUEUE_GET_TIMEOUT = 1  # 队列获取超时时间（秒）
+    QUEUE_PUT_TIMEOUT = 1  # 队列放入超时时间（秒）
     
     def __init__(
         self,
@@ -114,6 +118,39 @@ class WorkerManager:
         self.worker_threads.append(thread)
         self.logger.info(f"启动新工作线程，当前线程数: {len(self.worker_threads)}")
     
+    def _check_idle_timeout(self, thread_name: str, idle_start: Optional[float]) -> bool:
+        """
+        检查空闲超时，如果超时则尝试退出线程
+        
+        Args:
+            thread_name: 线程名称
+            idle_start: 空闲开始时间
+            
+        Returns:
+            bool: 如果应该退出线程则返回True，否则返回False
+        """
+        now = time.time()
+        if idle_start is None:
+            return False
+        
+        if now - idle_start >= self.idle_timeout:
+            # 检查是否可以退出（保持最小线程数）
+            # 在锁内检查并移除，避免竞态条件
+            with self.threads_lock:
+                current_thread = threading.current_thread()
+                # 再次检查线程数，确保在锁内的一致性
+                if len(self.worker_threads) > self.min_workers:
+                    # 检查当前线程是否仍在列表中
+                    if current_thread in self.worker_threads:
+                        self.worker_threads.remove(current_thread)
+                        self.logger.info(f"空闲线程退出: {thread_name}")
+                        return True
+                    # 如果线程不在列表中，说明已被其他操作移除，直接退出
+                    else:
+                        self.logger.debug(f"线程 {thread_name} 已被移除，退出")
+                        return True
+        return False
+    
     def _worker_loop(self) -> None:
         """
         工作线程主循环
@@ -127,7 +164,7 @@ class WorkerManager:
         
         while self._running_event.is_set():
             try:
-                task = self.task_queue.get(timeout=1)
+                task = self.task_queue.get(timeout=self.QUEUE_GET_TIMEOUT)
                 
                 # 退出信号
                 if task is None:
@@ -142,22 +179,8 @@ class WorkerManager:
                 now = time.time()
                 if idle_start is None:
                     idle_start = now
-                elif now - idle_start >= self.idle_timeout:
-                    # 检查是否可以退出（保持最小线程数）
-                    # 在锁内检查并移除，避免竞态条件
-                    with self.threads_lock:
-                        current_thread = threading.current_thread()
-                        # 再次检查线程数，确保在锁内的一致性
-                        if len(self.worker_threads) > self.min_workers:
-                            # 检查当前线程是否仍在列表中
-                            if current_thread in self.worker_threads:
-                                self.worker_threads.remove(current_thread)
-                                self.logger.info(f"空闲线程退出: {thread_name}")
-                                break
-                            # 如果线程不在列表中，说明已被其他操作移除，直接退出
-                            else:
-                                self.logger.debug(f"线程 {thread_name} 已被移除，退出")
-                                break
+                elif self._check_idle_timeout(thread_name, idle_start):
+                    break
                 continue
                 
             except KeyboardInterrupt:
@@ -199,7 +222,7 @@ class WorkerManager:
             except queue.Full:
                 # 队列已满，尝试等待并重试
                 try:
-                    self.task_queue.put(None, timeout=1)
+                    self.task_queue.put(None, timeout=self.QUEUE_PUT_TIMEOUT)
                     signals_sent += 1
                 except queue.Full:
                     self.logger.warning(
@@ -330,8 +353,8 @@ class TaskExecutor:
         self,
         task_id: str,
         func: Callable[..., Any],
-        args: tuple,
-        kwargs: dict,
+        args: Tuple[Any, ...],
+        kwargs: Dict[str, Any],
     ) -> Any:
         """
         执行任务，支持超时控制

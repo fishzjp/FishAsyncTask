@@ -37,6 +37,10 @@ class TaskManager:
     DEFAULT_CLEANUP_INTERVAL = 300  # 5分钟
     DEFAULT_THREAD_JOIN_TIMEOUT = 2  # 秒
     DEFAULT_TASK_TIMEOUT = None  # 默认无超时限制
+    
+    # 工作线程配置常量
+    DEFAULT_MIN_MAX_WORKERS = 4  # 最大工作线程数的最小值
+    CPU_MULTIPLIER = 4  # CPU核心数的倍数，用于计算最大工作线程数
 
     _instance_lock = threading.Lock()
     _instances: Dict[str, "TaskManager"] = {}
@@ -118,13 +122,8 @@ class TaskManager:
         self.task_queue: "queue.Queue[TaskTuple]" = (
             queue.Queue(maxsize=self.DEFAULT_QUEUE_SIZE)
         )
-        self.task_status: Dict[str, TaskStatusDict] = {}
         self.worker_threads: List[threading.Thread] = []
-        self.status_lock = threading.Lock()
         self.threads_lock = threading.Lock()
-
-        # 初始化logger
-        self.logger = logging.getLogger(__name__)
 
         # 初始化配置加载器
         config_loader = ConfigLoader(self.logger)
@@ -132,7 +131,7 @@ class TaskManager:
         # 初始化工作线程配置
         self.min_workers = self.DEFAULT_MIN_WORKERS
         cpu_count = os.cpu_count() or 1
-        self.max_workers = max(4, cpu_count * 4)
+        self.max_workers = max(self.DEFAULT_MIN_MAX_WORKERS, cpu_count * self.CPU_MULTIPLIER)
         self.idle_timeout = self.DEFAULT_IDLE_TIMEOUT
         
         # 加载并验证配置
@@ -158,8 +157,6 @@ class TaskManager:
         # 初始化任务状态管理器
         self.status_manager = TaskStatusManager(
             self.logger,
-            self.status_lock,
-            self.task_status,
             self.task_status_ttl,
             self.max_task_status_count,
         )
@@ -227,7 +224,7 @@ class TaskManager:
             **kwargs: 任务函数的关键字参数
             
         Returns:
-            str: 任务ID
+            str: 任务ID（UUID格式的字符串）
             
         Raises:
             TaskQueueFullError: 当队列已满且 block=False 时抛出
@@ -237,6 +234,19 @@ class TaskManager:
             - 如果 block=False 且队列已满，会抛出 TaskQueueFullError 异常
             - 如果 block=True，会阻塞等待直到队列有空间或超时
             - 提交后任务状态为"pending"，执行时变为"running"，完成后变为"completed"或"failed"
+            
+        Example:
+            >>> def my_task(name: str, value: int) -> str:
+            ...     return f"Task {name} completed with value {value}"
+            >>> 
+            >>> manager = TaskManager()
+            >>> # 非阻塞模式提交任务
+            >>> task_id = manager.submit_task(my_task, "task1", value=100)
+            >>> 
+            >>> # 阻塞模式提交任务（最多等待10秒）
+            >>> task_id = manager.submit_task(
+            ...     my_task, "task2", value=200, block=True, timeout=10.0
+            ... )
         """
         task_id = str(uuid.uuid4())
 
@@ -264,17 +274,25 @@ class TaskManager:
         此方法是线程安全的，可以在多个线程中并发调用。
         
         Args:
-            task_id: 任务ID
+            task_id: 任务ID（由 submit_task 返回的字符串）
             
         Returns:
             Optional[TaskStatusDict]: 任务状态字典，包含以下字段：
                 - status: 任务状态（"pending"、"running"、"completed"、"failed"）
-                - submit_time: 提交时间（时间戳，可选）
-                - start_time: 开始执行时间（时间戳，可选）
-                - end_time: 结束时间（时间戳，可选）
+                - submit_time: 提交时间（Unix时间戳，可选）
+                - start_time: 开始执行时间（Unix时间戳，可选）
+                - end_time: 结束时间（Unix时间戳，可选）
                 - result: 任务执行结果（仅当status为"completed"时存在）
                 - error: 错误信息（仅当status为"failed"时存在）
             如果任务不存在或已被清理，则返回None
+            
+        Example:
+            >>> task_id = manager.submit_task(my_task, "task1")
+            >>> status = manager.get_task_status(task_id)
+            >>> if status:
+            ...     print(f"任务状态: {status['status']}")
+            ...     if status['status'] == 'completed':
+            ...         print(f"结果: {status.get('result')}")
         """
         return self.status_manager.get_task_status(task_id)
 
@@ -325,6 +343,5 @@ class TaskManager:
         # 清理资源（在所有线程退出后再清理）
         with self.threads_lock:
             self.worker_threads.clear()
-        with self.status_lock:
-            self.task_status.clear()
+        self.status_manager.clear_task_status()
         self.logger.info("任务管理器已关闭")
