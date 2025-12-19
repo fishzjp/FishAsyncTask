@@ -91,7 +91,7 @@ python -m build
 ```
 
 构建完成后，分发包位于 `dist/` 目录下：
-- `fish-async-task-0.1.0.tar.gz` - 源码分发包
+- `fish-async-task-0.2.0.tar.gz` - 源码分发包
 
 ### 构建 wheel 包
 
@@ -100,7 +100,7 @@ python -m build --wheel
 ```
 
 构建完成后，wheel 包位于 `dist/` 目录下：
-- `fish_async_task-0.1.0-py3-none-any.whl` - wheel 包
+- `fish_async_task-0.2.0-py3-none-any.whl` - wheel 包
 
 ### 同时构建两种格式
 
@@ -185,7 +185,7 @@ A: 请检查：
 
 A: 如果包已发布到 PyPI：
 ```bash
-pip install fish-async-task==0.1.0
+pip install fish-async-task==0.2.0
 ```
 
 ### Q: 开发模式下如何更新代码？
