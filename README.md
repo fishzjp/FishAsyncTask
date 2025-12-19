@@ -281,6 +281,7 @@ except TaskQueueFullError as e:
 | `MAX_TASK_STATUS_COUNT` | 最大任务状态数量，超过此数量会触发清理 | 10000 | `export MAX_TASK_STATUS_COUNT=20000` |
 | `TASK_CLEANUP_INTERVAL` | 清理间隔（秒），定期清理过期任务状态 | 300（5分钟） | `export TASK_CLEANUP_INTERVAL=600` |
 | `TASK_TIMEOUT` | 任务执行超时时间（秒），超过此时间任务会被标记为失败 | 无限制 | `export TASK_TIMEOUT=300` |
+| `TASK_STATUS_SHARD_COUNT` | 任务状态存储的分片数量，用于优化并发性能 | 16 | `export TASK_STATUS_SHARD_COUNT=32` |
 
 **示例：**
 ```bash
@@ -420,6 +421,10 @@ notification_manager = TaskManager(instance_key="notification")
 5. **队列大小**：注意队列大小限制（默认1000），避免任务提交失败
 6. **状态清理**：任务状态会自动清理，不要依赖长期存在的状态
 7. **单例模式**：相同 `instance_key` 的 `TaskManager` 是同一个实例，修改会影响所有引用
+8. **任务超时限制**：由于 Python GIL 的限制，当任务超时时，虽然会抛出 `TimeoutError` 并标记任务为失败，但任务线程仍在后台运行。这可能导致资源泄漏（文件句柄、网络连接等）。建议：
+   - 在任务函数中使用上下文管理器（`with` 语句）管理资源
+   - 在任务函数中定期检查超时标志
+   - 对于长时间运行的任务，考虑使用进程池而非线程池
 
 ## 许可证
 
@@ -465,9 +470,16 @@ A: 默认保留1小时（3600秒），可以通过 `TASK_STATUS_TTL` 环境变�
 
 A: 通过 `TASK_TIMEOUT` 环境变量设置，例如：`export TASK_TIMEOUT=300`（5分钟超时）。
 
+**重要提示**：由于 Python GIL 的限制，当任务超时时，虽然会抛出 `TimeoutError` 并标记任务为失败，但任务线程仍在后台运行。这可能导致资源泄漏。建议在任务函数中使用上下文管理器管理资源，或考虑使用进程池处理长时间运行的任务。
+
 ## 更新日志
 
-### 0.1.0 (2025-12-03)
+### 0.2.0 (未发布)
+
+- ✨ 支持任务状态分片存储，优化高并发场景下的性能
+- ✨ 新增 `TASK_STATUS_SHARD_COUNT` 环境变量配置
+
+### 0.1.0 (2025-12-19)
 
 - ✨ 初始版本发布
 - ✨ 支持基本的任务提交和状态查询
