@@ -668,6 +668,251 @@ def test_timeout_warning_logged():
     task_manager.shutdown()
 
 
+def test_sharded_status_concurrent_queries():
+    """测试分片状态存储的并发查询正确性"""
+    from fish_async_task.task_status import ShardedTaskStatusWithExpiry
+    from fish_async_task.types import TaskStatusDict
+    import concurrent.futures
+    
+    sharded_status = ShardedTaskStatusWithExpiry(shard_count=16, ttl=3600)
+    
+    # 创建1000个任务状态
+    task_ids = []
+    for i in range(1000):
+        task_id = f"task_{i}"
+        status: TaskStatusDict = {
+            "status": "completed",
+            "submit_time": time.time() - 100,
+            "start_time": time.time() - 90,
+            "end_time": time.time() - 80,
+            "result": i * 2,
+        }
+        sharded_status.update_status(task_id, status)
+        task_ids.append(task_id)
+    
+    # 并发查询所有任务状态
+    def query_task(task_id: str):
+        return sharded_status.get_status(task_id)
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+        futures = [executor.submit(query_task, task_id) for task_id in task_ids]
+        results = [f.result() for f in futures]
+    
+    # 验证所有查询都成功
+    assert len(results) == 1000
+    assert all(r is not None for r in results)
+    assert all(r["status"] == "completed" for r in results)
+
+
+def test_sharded_status_concurrent_updates():
+    """测试分片状态存储的并发更新正确性"""
+    from fish_async_task.task_status import ShardedTaskStatusWithExpiry
+    from fish_async_task.types import TaskStatusDict
+    import concurrent.futures
+    
+    sharded_status = ShardedTaskStatusWithExpiry(shard_count=16, ttl=3600)
+    
+    # 并发更新1000个任务状态
+    def update_task(task_id: str, value: int):
+        status: TaskStatusDict = {
+            "status": "completed",
+            "submit_time": time.time() - 100,
+            "start_time": time.time() - 90,
+            "end_time": time.time() - 80,
+            "result": value,
+        }
+        sharded_status.update_status(task_id, status)
+        return sharded_status.get_status(task_id)
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+        futures = [
+            executor.submit(update_task, f"task_{i}", i * 2)
+            for i in range(1000)
+        ]
+        results = [f.result() for f in futures]
+    
+    # 验证所有更新都成功
+    assert len(results) == 1000
+    assert all(r is not None for r in results)
+    assert all(r["status"] == "completed" for r in results)
+    # 验证结果值正确
+    for i, result in enumerate(results):
+        assert result["result"] == i * 2
+
+
+def test_priority_queue_cleanup():
+    """测试优先级队列清理功能"""
+    from fish_async_task.task_status import ShardedTaskStatusWithExpiry
+    from fish_async_task.types import TaskStatusDict
+    
+    # 使用较短的TTL便于测试
+    sharded_status = ShardedTaskStatusWithExpiry(shard_count=4, ttl=2)
+    
+    # 创建一些已完成的任务（部分过期，部分未过期）
+    now = time.time()
+    expired_task_ids = []
+    valid_task_ids = []
+    
+    # 创建10个已过期的任务
+    for i in range(10):
+        task_id = f"expired_task_{i}"
+        status: TaskStatusDict = {
+            "status": "completed",
+            "submit_time": now - 100,
+            "start_time": now - 90,
+            "end_time": now - 5,  # 5秒前完成，超过2秒TTL
+        }
+        sharded_status.update_status(task_id, status)
+        expired_task_ids.append(task_id)
+    
+    # 创建10个未过期的任务
+    for i in range(10):
+        task_id = f"valid_task_{i}"
+        status: TaskStatusDict = {
+            "status": "completed",
+            "submit_time": now - 100,
+            "start_time": now - 90,
+            "end_time": now - 1,  # 1秒前完成，未超过2秒TTL
+        }
+        sharded_status.update_status(task_id, status)
+        valid_task_ids.append(task_id)
+    
+    # 等待一小段时间确保时间戳正确
+    time.sleep(0.1)
+    
+    # 执行清理
+    cleaned_count = sharded_status.cleanup_expired(max_cleanup=None)
+    
+    # 验证过期任务被清理
+    assert cleaned_count >= 10, f"应该清理至少10个过期任务，实际清理了 {cleaned_count}"
+    
+    # 验证过期任务已不存在
+    for task_id in expired_task_ids:
+        assert sharded_status.get_status(task_id) is None, f"过期任务 {task_id} 应该被清理"
+    
+    # 验证未过期任务仍然存在
+    for task_id in valid_task_ids:
+        assert sharded_status.get_status(task_id) is not None, f"未过期任务 {task_id} 应该仍然存在"
+
+
+def test_incremental_cleanup():
+    """测试增量清理策略"""
+    from fish_async_task.task_status import ShardedTaskStatusWithExpiry
+    from fish_async_task.types import TaskStatusDict
+    
+    sharded_status = ShardedTaskStatusWithExpiry(shard_count=4, ttl=2)
+    
+    # 创建大量已过期的任务
+    now = time.time()
+    task_ids = []
+    for i in range(200):
+        task_id = f"task_{i}"
+        status: TaskStatusDict = {
+            "status": "completed",
+            "submit_time": now - 100,
+            "start_time": now - 90,
+            "end_time": now - 5,  # 已过期
+        }
+        sharded_status.update_status(task_id, status)
+        task_ids.append(task_id)
+    
+    time.sleep(0.1)
+    
+    # 第一次清理，限制最多清理50个
+    cleaned1 = sharded_status.cleanup_expired(max_cleanup=50)
+    assert cleaned1 == 50, f"第一次应该清理50个，实际清理了 {cleaned1}"
+    
+    # 第二次清理，应该继续清理剩余的
+    cleaned2 = sharded_status.cleanup_expired(max_cleanup=50)
+    assert cleaned2 == 50, f"第二次应该清理50个，实际清理了 {cleaned2}"
+    
+    # 第三次清理，应该清理剩余的（可能少于50个，因为已经清理了100个）
+    cleaned3 = sharded_status.cleanup_expired(max_cleanup=50)
+    assert cleaned3 > 0, f"第三次应该清理一些任务，实际清理了 {cleaned3}"
+    
+    # 继续清理直到全部清理完成
+    total_cleaned = cleaned1 + cleaned2 + cleaned3
+    while True:
+        cleaned = sharded_status.cleanup_expired(max_cleanup=50)
+        if cleaned == 0:
+            break
+        total_cleaned += cleaned
+    
+    # 验证所有任务都被清理了
+    assert total_cleaned == 200, f"应该清理200个任务，实际清理了 {total_cleaned}"
+    
+    # 验证所有任务状态都已不存在
+    for task_id in task_ids:
+        assert sharded_status.get_status(task_id) is None, f"任务 {task_id} 应该已被清理"
+
+
+def test_sharded_status_thread_safety():
+    """测试分片状态存储的线程安全性"""
+    from fish_async_task.task_status import ShardedTaskStatusWithExpiry
+    from fish_async_task.types import TaskStatusDict
+    import concurrent.futures
+    import random
+    
+    sharded_status = ShardedTaskStatusWithExpiry(shard_count=16, ttl=3600)
+    
+    # 创建100个任务
+    task_ids = [f"task_{i}" for i in range(100)]
+    
+    def worker(task_id: str):
+        """工作线程：随机执行查询、更新、删除操作"""
+        operations = []
+        for _ in range(10):
+            op = random.choice(["get", "update", "get"])
+            if op == "get":
+                result = sharded_status.get_status(task_id)
+                operations.append(("get", result is not None))
+            elif op == "update":
+                status: TaskStatusDict = {
+                    "status": "running",
+                    "submit_time": time.time(),
+                    "start_time": time.time(),
+                }
+                sharded_status.update_status(task_id, status)
+                operations.append(("update", True))
+        
+        return operations
+    
+    # 并发执行操作
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+        futures = [executor.submit(worker, task_id) for task_id in task_ids]
+        results = [f.result() for f in futures]
+    
+    # 验证没有异常抛出（线程安全性）
+    assert len(results) == 100
+    assert all(len(ops) == 10 for ops in results)
+
+
+def test_task_status_manager_with_sharded_storage():
+    """测试使用分片存储的 TaskStatusManager"""
+    task_manager = TaskManagerClass.__new__(TaskManagerClass)
+    task_manager._init_task_manager()
+    
+    # 提交多个任务
+    task_ids = []
+    for i in range(100):
+        task_id = task_manager.submit_task(simple_task, i)
+        task_ids.append(task_id)
+    
+    # 等待所有任务完成
+    for task_id in task_ids:
+        status = wait_for_task_completion(task_manager, task_id, timeout=15)
+        assert status is not None
+        assert status["status"] == "completed"
+    
+    # 验证所有任务状态都可以查询到
+    for task_id in task_ids:
+        status = task_manager.get_task_status(task_id)
+        assert status is not None
+        assert status["status"] == "completed"
+    
+    task_manager.shutdown()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

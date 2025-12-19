@@ -7,16 +7,29 @@
 from typing import Any, Callable, Dict, Literal, Tuple, TypedDict
 
 # 类型别名
-TaskTuple = Tuple[str, Callable[..., Any], tuple, dict]
+# TaskTuple: (task_id, func, args, kwargs)
+# - task_id: 任务ID（字符串）
+# - func: 要执行的任务函数
+# - args: 任务函数的位置参数（元组）
+# - kwargs: 任务函数的关键字参数（字典）
+TaskTuple = Tuple[str, Callable[..., Any], Tuple[Any, ...], Dict[str, Any]]
 TaskStatus = Literal["pending", "running", "completed", "failed"]
 
 
 class TaskStatusDict(TypedDict, total=False):
-    """任务状态字典类型定义"""
+    """
+    任务状态字典类型定义
+    
+    所有字段都是可选的（total=False），因为不同状态的任务包含的字段不同：
+    - pending: status, submit_time
+    - running: status, submit_time, start_time
+    - completed: status, submit_time, start_time, end_time, result
+    - failed: status, submit_time, start_time, end_time, error
+    """
     status: TaskStatus  # pending, running, completed, failed
-    submit_time: float
-    start_time: float
-    end_time: float
-    result: Any
-    error: str
+    submit_time: float  # 任务提交时间（Unix时间戳）
+    start_time: float  # 任务开始执行时间（Unix时间戳）
+    end_time: float  # 任务结束时间（Unix时间戳）
+    result: Any  # 任务执行结果（仅completed状态）
+    error: str  # 错误信息（仅failed状态）
 
