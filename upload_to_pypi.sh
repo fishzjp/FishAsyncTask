@@ -29,7 +29,7 @@ if [ -z "$TWINE_USERNAME" ] || [ -z "$TWINE_PASSWORD" ]; then
 fi
 
 # 检查文件是否存在
-if [ ! -f "dist/fish_async_task-0.1.0-py3-none-any.whl" ] || [ ! -f "dist/fish_async_task-0.1.0.tar.gz" ]; then
+if [ ! -f "dist/fish_async_task-0.2.0-py3-none-any.whl" ] || [ ! -f "dist/fish_async_task-0.2.0.tar.gz" ]; then
     echo "❌ 错误: 构建文件不存在，请先运行构建："
     echo "  python -m build"
     exit 1
