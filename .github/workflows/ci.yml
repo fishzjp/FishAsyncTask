@@ -9,19 +9,11 @@ on:
 jobs:
   test:
     name: Test Python ${{ matrix.python-version }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - python-version: "3.7"
-            os: ubuntu-20.04
-          - python-version: "3.9"
-            os: ubuntu-latest
-          - python-version: "3.11"
-            os: ubuntu-latest
-          - python-version: "3.12"
-            os: ubuntu-latest
+        python-version: ["3.7", "3.9", "3.11", "3.12"]
 
     steps:
     - name: Checkout code
@@ -32,10 +24,9 @@ jobs:
       with:
         version: "latest"
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+    - name: Install Python ${{ matrix.python-version }}
+      run: |
+        uv python install ${{ matrix.python-version }}
 
     - name: Cache uv dependencies
       uses: actions/cache@v4
@@ -47,7 +38,7 @@ jobs:
 
     - name: Create virtual environment
       run: |
-        uv venv
+        uv venv --python ${{ matrix.python-version }}
 
     - name: Install dependencies
       run: |
