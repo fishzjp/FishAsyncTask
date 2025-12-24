@@ -4,7 +4,7 @@
 定义任务管理器相关的类型别名和类型定义。
 """
 
-from typing import Any, Callable, Dict, Literal, Tuple, TypedDict
+from typing import Any, Callable, Dict, Literal, Optional, Tuple, TypedDict, Union
 
 # 类型别名
 # TaskTuple: (task_id, func, args, kwargs)
@@ -19,17 +19,19 @@ TaskStatus = Literal["pending", "running", "completed", "failed"]
 class TaskStatusDict(TypedDict, total=False):
     """
     任务状态字典类型定义
-    
+
     所有字段都是可选的（total=False），因为不同状态的任务包含的字段不同：
     - pending: status, submit_time
     - running: status, submit_time, start_time
     - completed: status, submit_time, start_time, end_time, result
     - failed: status, submit_time, start_time, end_time, error
+
+    所有可选字段都使用 Optional 注解，明确标识该字段可能为 None。
     """
-    status: TaskStatus  # pending, running, completed, failed
-    submit_time: float  # 任务提交时间（Unix时间戳）
-    start_time: float  # 任务开始执行时间（Unix时间戳）
-    end_time: float  # 任务结束时间（Unix时间戳）
-    result: Any  # 任务执行结果（仅completed状态）
-    error: str  # 错误信息（仅failed状态）
+    status: Optional[TaskStatus]  # pending, running, completed, failed
+    submit_time: Optional[float]  # 任务提交时间（Unix时间戳）
+    start_time: Optional[float]  # 任务开始执行时间（Unix时间戳）
+    end_time: Optional[float]  # 任务结束时间（Unix时间戳）
+    result: Optional[Any]  # 任务执行结果（仅completed状态）
+    error: Optional[str]  # 错误信息（仅failed状态）
 

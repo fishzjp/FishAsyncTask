@@ -136,23 +136,31 @@ class TaskManager:
         
         # 加载并验证配置
         self.task_status_ttl = config_loader.load_int_config(
-            "TASK_STATUS_TTL", self.DEFAULT_TASK_STATUS_TTL, "TASK_STATUS_TTL"
+            "TASK_STATUS_TTL", self.DEFAULT_TASK_STATUS_TTL, "TASK_STATUS_TTL",
+            min_value=1, max_value=config_loader.MAX_TTL
         )
         self.max_task_status_count = config_loader.load_int_config(
             "MAX_TASK_STATUS_COUNT",
             self.DEFAULT_MAX_TASK_STATUS_COUNT,
             "MAX_TASK_STATUS_COUNT",
+            min_value=1, max_value=config_loader.MAX_TASK_STATUS_COUNT
         )
         self.cleanup_interval = config_loader.load_int_config(
             "TASK_CLEANUP_INTERVAL",
             self.DEFAULT_CLEANUP_INTERVAL,
             "TASK_CLEANUP_INTERVAL",
+            min_value=1, max_value=config_loader.MAX_CLEANUP_INTERVAL
         )
         self.task_timeout = config_loader.load_timeout_config(self.DEFAULT_TASK_TIMEOUT)
 
         # 初始化运行标志
         self._running_event = threading.Event()
         self._running_event.set()
+
+        # 初始化扩缩容调度标志（用于延迟批量检查）
+        self._scale_scheduled = False
+        self._scale_lock = threading.Lock()
+        self._scale_check_interval = 0.1  # 扩缩容检查间隔（秒）
         
         # 初始化任务状态管理器
         self.status_manager = TaskStatusManager(
@@ -189,9 +197,11 @@ class TaskManager:
             self.cleanup_interval,
             self.status_manager.cleanup_old_task_status,
         )
-        
-        self.logger.info(
-            f"任务管理器初始化完成 - TTL: {self.task_status_ttl}s, "
+
+        self.logger.info("任务管理器初始化完成")
+
+        self.logger.debug(
+            f"任务管理器配置 - TTL: {self.task_status_ttl}s, "
             f"最大状态数: {self.max_task_status_count}, "
             f"清理间隔: {self.cleanup_interval}s, "
             f"任务超时: {self.task_timeout or '无限制'}s"
@@ -200,6 +210,33 @@ class TaskManager:
         # 启动初始线程和清理线程
         self.worker_manager.start_initial_workers()
         self.cleanup_manager.start()
+
+    def _schedule_scale_check(self) -> None:
+        """
+        调度延迟的扩缩容检查
+
+        使用Timer实现延迟检查，避免每次提交任务都触发扩缩容检查，
+        减少锁竞争，提高高并发场景下的性能。
+        """
+        with self._scale_lock:
+            if self._scale_scheduled:
+                # 已经有一个检查在等待中，跳过
+                return
+            self._scale_scheduled = True
+
+        # 在后台线程中执行扩缩容检查
+        def delayed_scale_check() -> None:
+            try:
+                self.worker_manager.scale_up_workers_if_needed()
+            except Exception as e:
+                self.logger.error(f"扩缩容检查失败 [{type(e).__name__}]: {e}", exc_info=True)
+            finally:
+                with self._scale_lock:
+                    self._scale_scheduled = False
+
+        scale_timer = threading.Timer(self._scale_check_interval, delayed_scale_check)
+        scale_timer.daemon = True
+        scale_timer.start()
 
     def submit_task(
         self, 
@@ -263,7 +300,8 @@ class TaskManager:
         # 更新任务状态为pending
         self.status_manager.update_task_status(task_id, "pending", submit_time=time.time())
 
-        self.worker_manager.scale_up_workers_if_needed()
+        # 调度延迟的扩缩容检查，避免每次提交都触发检查
+        self._schedule_scale_check()
         self.logger.debug(f"已提交任务 {task_id} 到队列")
         return task_id
 

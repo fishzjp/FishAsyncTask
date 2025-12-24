@@ -193,6 +193,15 @@ class WorkerManager:
             except queue.Full:
                 # 队列满异常，不应该在工作线程中出现，记录警告
                 self.logger.warning(f"工作线程意外遇到队列满异常: {thread_name}")
+            except TimeoutError as e:
+                # 超时异常，记录警告但继续运行
+                self.logger.warning(f"工作线程任务执行超时: {e}")
+            except (IOError, OSError, ConnectionError) as e:
+                # I/O 相关异常，可能是临时性问题，记录警告并继续
+                self.logger.warning(f"工作线程遇到 I/O 相关异常 [{type(e).__name__}]: {e}")
+            except (MemoryError, ResourceWarning) as e:
+                # 资源相关异常，记录错误但尝试继续运行
+                self.logger.error(f"工作线程遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True)
             except Exception as e:
                 # 记录未预期的异常，但不中断线程运行
                 # 这确保了单个任务的异常不会影响整个线程池的运行
@@ -274,16 +283,21 @@ class WorkerManager:
 class TaskExecutor:
     """
     任务执行器
-    
+
     负责任务的实际执行，包括超时控制和状态更新。
     每个任务在独立的工作线程中执行，支持超时机制。
-    
+
     线程安全说明：
     - execute_task方法可以在多个线程中并发调用
     - 任务执行是独立的，不会相互影响
     - 超时机制使用daemon线程实现，超时后任务线程仍在后台运行
+    - 通过 cleanup_timed_out_tasks 方法可以清理超时的任务线程引用
     """
-    
+
+    # 超时任务跟踪相关常量
+    MAX_TRACKED_TIMEOUTS = 1000  # 最多跟踪的超时任务数量
+    TIMEOUT_TASK_EXPIRY = 3600  # 超时任务信息过期时间（秒）
+
     def __init__(
         self,
         logger: logging.Logger,
@@ -292,7 +306,7 @@ class TaskExecutor:
     ):
         """
         初始化任务执行器
-        
+
         Args:
             logger: 日志记录器
             task_timeout_getter: 获取任务超时时间的函数（支持动态获取）
@@ -301,6 +315,13 @@ class TaskExecutor:
         self.logger = logger
         self._get_task_timeout = task_timeout_getter
         self._update_status = update_status_func
+
+        # 超时任务跟踪（用于资源清理）
+        self._timed_out_tasks: Dict[str, float] = {}
+        self._timed_out_tasks_lock = threading.Lock()
+
+        # 清理回调列表（用于自定义清理逻辑）
+        self._cleanup_callbacks: List[Callable[[str], None]] = []
     
     def execute_task(self, task: TaskTuple) -> None:
         """
@@ -340,6 +361,27 @@ class TaskExecutor:
         except SystemExit:
             # 系统退出，重新抛出
             raise
+        except TimeoutError as e:
+            # 超时异常，标记为失败
+            end_time = time.time()
+            self._update_status(
+                task_id, "failed", start_time=start_time, end_time=end_time, error=str(e)
+            )
+            self.logger.warning(f"任务 {task_id} 执行超时: {e}")
+        except (IOError, OSError, ConnectionError) as e:
+            # I/O 相关异常，可能是临时性问题
+            end_time = time.time()
+            self._update_status(
+                task_id, "failed", start_time=start_time, end_time=end_time, error=str(e)
+            )
+            self.logger.warning(f"任务 {task_id} 遇到 I/O 异常 [{type(e).__name__}]: {e}")
+        except (MemoryError, ResourceWarning) as e:
+            # 资源相关异常
+            end_time = time.time()
+            self._update_status(
+                task_id, "failed", start_time=start_time, end_time=end_time, error=str(e)
+            )
+            self.logger.error(f"任务 {task_id} 遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True)
         except Exception as e:
             # 记录任务执行异常
             end_time = time.time()
@@ -392,13 +434,13 @@ class TaskExecutor:
         task_timeout = self._get_task_timeout()
         if not task_timeout:
             return func(*args, **kwargs)
-        
+
         result_container: Dict[str, Any] = {
             "result": None,
             "exception": None,
             "completed": False,
         }
-        
+
         def task_wrapper() -> None:
             """任务包装器，捕获执行结果和异常"""
             try:
@@ -407,21 +449,110 @@ class TaskExecutor:
                 result_container["exception"] = e
             finally:
                 result_container["completed"] = True
-        
+
         task_thread = threading.Thread(target=task_wrapper, daemon=True)
         task_thread.start()
         task_thread.join(timeout=task_timeout)
-        
+
         if not result_container["completed"]:
             # 记录超时警告，提醒任务仍在后台运行
+            current_time = time.time()
             self.logger.warning(
                 f"任务 {task_id} 执行超时（{task_timeout}秒），"
                 f"但任务线程仍在后台运行，可能导致资源泄漏"
             )
+
+            # 跟踪超时任务（用于后续清理和监控）
+            with self._timed_out_tasks_lock:
+                # 清理过期的超时任务记录
+                expired_tasks = [
+                    tid for tid, expiry in self._timed_out_tasks.items()
+                    if current_time - expiry > self.TIMEOUT_TASK_EXPIRY
+                ]
+                for tid in expired_tasks:
+                    self._timed_out_tasks.pop(tid, None)
+
+                # 添加新的超时任务记录
+                if len(self._timed_out_tasks) < self.MAX_TRACKED_TIMEOUTS:
+                    self._timed_out_tasks[task_id] = current_time
+
+            # 调用清理回调
+            self._trigger_cleanup_callbacks(task_id)
+
             raise TimeoutError(f"任务 {task_id} 执行超时（{task_timeout}秒）")
-        
+
         if result_container["exception"]:
             raise result_container["exception"]
-        
+
         return result_container["result"]
+
+    def add_cleanup_callback(self, callback: Callable[[str], None]) -> None:
+        """
+        添加清理回调函数
+
+        当任务超时时，会调用所有注册的清理回调函数。
+
+        Args:
+            callback: 清理回调函数，接收任务ID作为参数
+        """
+        with self._timed_out_tasks_lock:
+            self._cleanup_callbacks.append(callback)
+
+    def _trigger_cleanup_callbacks(self, task_id: str) -> None:
+        """
+        触发所有清理回调
+
+        Args:
+            task_id: 超时的任务ID
+        """
+        for callback in self._cleanup_callbacks:
+            try:
+                callback(task_id)
+            except Exception as e:
+                self.logger.error(
+                    f"清理回调执行失败 [{type(e).__name__}]: {e}",
+                    exc_info=True
+                )
+
+    def cleanup_timed_out_tasks(self, max_cleanup: int = 100) -> int:
+        """
+        清理超时的任务线程引用
+
+        注意：由于Python线程无法被强制终止，此方法主要用于清理跟踪信息，
+        实际的任务线程仍会在后台运行直到任务完成或进程退出。
+
+        Args:
+            max_cleanup: 最大清理数量
+
+        Returns:
+            int: 清理的任务数量
+        """
+        current_time = time.time()
+        cleaned_count = 0
+
+        with self._timed_out_tasks_lock:
+            expired_tasks = [
+                (tid, expiry) for tid, expiry in self._timed_out_tasks.items()
+                if current_time - expiry > self.TIMEOUT_TASK_EXPIRY
+            ]
+
+            # 限制每次清理的数量
+            for task_id, _ in expired_tasks[:max_cleanup]:
+                self._timed_out_tasks.pop(task_id, None)
+                cleaned_count += 1
+
+        if cleaned_count > 0:
+            self.logger.info(f"清理了 {cleaned_count} 个超时任务跟踪记录")
+
+        return cleaned_count
+
+    def get_timed_out_task_count(self) -> int:
+        """
+        获取当前跟踪的超时任务数量
+
+        Returns:
+            int: 超时任务数量
+        """
+        with self._timed_out_tasks_lock:
+            return len(self._timed_out_tasks)
 

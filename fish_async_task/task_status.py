@@ -229,21 +229,24 @@ class ShardedTaskStatusWithExpiry:
     def enforce_max_count(self, max_count: int) -> int:
         """
         强制执行最大任务数量限制
-        
+
         当任务状态数量超过限制时，按时间顺序清理最旧的任务。
         需要获取所有锁，按顺序获取避免死锁。
-        
+
         Args:
             max_count: 最大任务数量
-            
+
         Returns:
             int: 清理的任务数量
         """
-        # 按顺序获取所有锁（避免死锁）
-        for lock in self.locks:
-            lock.acquire()
+        acquired_locks: List[threading.Lock] = []
         
         try:
+            # 按顺序获取所有锁（避免死锁）
+            for lock in self.locks:
+                lock.acquire()
+                acquired_locks.append(lock)
+            
             # 在持有所有锁的情况下统计总任务数，避免竞态条件
             total_count = sum(len(shard) for shard in self.shards)
             if total_count <= max_count:
@@ -253,7 +256,7 @@ class ShardedTaskStatusWithExpiry:
             all_tasks = self._collect_all_tasks()
             
             # 保留最新的 max_count 个任务
-            tasks_to_keep = set()
+            tasks_to_keep: set = set()
             for _, task_id, _, _ in all_tasks[:max_count]:
                 tasks_to_keep.add(task_id)
             
@@ -264,31 +267,43 @@ class ShardedTaskStatusWithExpiry:
             self._rebuild_expiry_heaps(tasks_to_keep)
             
             return cleaned_count
+        except Exception:
+            # 确保即使发生异常也能释放已获取的锁
+            raise
         finally:
-            # 释放所有锁
-            for lock in self.locks:
-                lock.release()
+            # 逆序释放所有已获取的锁（与获取顺序相反）
+            for lock in reversed(acquired_locks):
+                try:
+                    lock.release()
+                except Exception:
+                    # 锁可能已被释放，忽略异常
+                    pass
     
     def get_all_statuses(self) -> Dict[str, TaskStatusDict]:
         """
         获取所有任务状态（需要获取所有锁）
-        
+
         Returns:
             Dict[str, TaskStatusDict]: 所有任务状态字典
         """
-        result = {}
-        
-        # 按顺序获取所有锁，避免死锁
-        for lock in self.locks:
-            lock.acquire()
+        result: Dict[str, TaskStatusDict] = {}
+        acquired_locks: List[threading.Lock] = []
         
         try:
+            # 按顺序获取所有锁，避免死锁
+            for lock in self.locks:
+                lock.acquire()
+                acquired_locks.append(lock)
+            
             for shard in self.shards:
                 result.update(shard)
         finally:
-            # 释放所有锁
-            for lock in self.locks:
-                lock.release()
+            # 逆序释放所有已获取的锁
+            for lock in reversed(acquired_locks):
+                try:
+                    lock.release()
+                except Exception:
+                    pass
         
         return result
     
@@ -296,28 +311,111 @@ class ShardedTaskStatusWithExpiry:
         """
         清空所有任务状态
         """
-        # 按顺序获取所有锁
-        for lock in self.locks:
-            lock.acquire()
+        acquired_locks: List[threading.Lock] = []
         
         try:
+            # 按顺序获取所有锁
+            for lock in self.locks:
+                lock.acquire()
+                acquired_locks.append(lock)
+            
             for shard in self.shards:
                 shard.clear()
             for heap in self.expiry_heaps:
                 heap.clear()
         finally:
-            # 释放所有锁
-            for lock in self.locks:
-                lock.release()
+            # 逆序释放所有已获取的锁
+            for lock in reversed(acquired_locks):
+                try:
+                    lock.release()
+                except Exception:
+                    pass
     
     def get_total_count(self) -> int:
         """
         获取总任务数量（不需要锁，仅用于统计）
-        
+
         Returns:
             int: 总任务数量
         """
         return sum(len(shard) for shard in self.shards)
+
+    def resize_shards(self, new_shard_count: int) -> bool:
+        """
+        动态调整分片数量
+
+        此方法会重新分配所有任务状态到新的分片结构中。
+        由于需要重建所有数据结构，这可能是一个耗时操作，
+        建议在低负载时执行或在外部异步执行。
+
+        Args:
+            new_shard_count: 新的分片数量，必须为正整数
+
+        Returns:
+            bool: 如果调整成功返回True，否则返回False
+
+        Warning:
+            此操作会短暂阻塞所有状态更新和查询操作。
+            建议在系统初始化时设置合适的分片数量，
+            并尽量避免在生产环境中频繁调整。
+        """
+        if new_shard_count < 1:
+            return False
+
+        # 如果分片数量相同，无需调整
+        if new_shard_count == self.shard_count:
+            return True
+
+        # 收集所有当前任务状态
+        all_tasks: Dict[str, TaskStatusDict] = {}
+        acquired_locks: List[threading.Lock] = []
+
+        try:
+            # 获取所有锁
+            for lock in self.locks:
+                lock.acquire()
+                acquired_locks.append(lock)
+
+            # 收集所有任务
+            for shard in self.shards:
+                all_tasks.update(shard)
+
+        finally:
+            # 释放所有锁
+            for lock in reversed(acquired_locks):
+                try:
+                    lock.release()
+                except Exception:
+                    pass
+
+        # 创建新的分片结构
+        new_shards: List[Dict[str, TaskStatusDict]] = [dict() for _ in range(new_shard_count)]
+        new_locks: List[threading.Lock] = [threading.Lock() for _ in range(new_shard_count)]
+        new_expiry_heaps: List[List[Tuple[float, str]]] = [[] for _ in range(new_shard_count)]
+
+        # 重新分配任务到新的分片
+        for task_id, status in all_tasks.items():
+            new_shard_idx = hash(task_id) % new_shard_count
+            new_shards[new_shard_idx][task_id] = status
+
+            # 重新计算过期时间堆
+            if status.get("status") in ("completed", "failed"):
+                end_time = status.get("end_time")
+                if end_time:
+                    expiry_time = end_time + self.ttl
+                    heapq.heappush(new_expiry_heaps[new_shard_idx], (expiry_time, task_id))
+
+        # 原子性地替换旧的分片结构
+        with self._resizing_lock:
+            self.shards = new_shards
+            self.locks = new_locks
+            self.expiry_heaps = new_expiry_heaps
+            self.shard_count = new_shard_count
+
+        return True
+
+    # 添加重配置锁（用于resize操作）
+    _resizing_lock = threading.Lock()
 
 
 class TaskStatusManager:
@@ -528,7 +626,47 @@ class TaskStatusManager:
                 f"清理了 {cleaned_count} 个过期任务状态，"
                 f"当前任务状态数: {current_count}"
             )
-        
+
         return cleaned_count
+
+    def resize_shards(self, new_shard_count: int) -> bool:
+        """
+        动态调整分片数量
+
+        此方法会重新分配所有任务状态到新的分片结构中。
+        由于需要重建所有数据结构，这可能是一个耗时操作，
+        建议在低负载时执行或在外部异步执行。
+
+        Args:
+            new_shard_count: 新的分片数量，必须为正整数
+
+        Returns:
+            bool: 如果调整成功返回True，否则返回False
+
+        Warning:
+            此操作会短暂阻塞所有状态更新和查询操作。
+            建议在系统初始化时设置合适的分片数量，
+            并尽量避免在生产环境中频繁调整。
+        """
+        if new_shard_count < 1:
+            self.logger.warning(f"无效的分片数量: {new_shard_count}，必须大于0")
+            return False
+
+        if new_shard_count == self.sharded_status.shard_count:
+            self.logger.info(f"分片数量无需调整，当前已是 {new_shard_count}")
+            return True
+
+        self.logger.info(
+            f"正在调整分片数量从 {self.sharded_status.shard_count} 到 {new_shard_count}"
+        )
+
+        success = self.sharded_status.resize_shards(new_shard_count)
+
+        if success:
+            self.logger.info(f"分片数量调整成功，当前分片数: {new_shard_count}")
+        else:
+            self.logger.error(f"分片数量调整失败")
+
+        return success
     
 
