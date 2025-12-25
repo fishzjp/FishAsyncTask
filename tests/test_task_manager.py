@@ -891,26 +891,484 @@ def test_task_status_manager_with_sharded_storage():
     """测试使用分片存储的 TaskStatusManager"""
     task_manager = TaskManagerClass.__new__(TaskManagerClass)
     task_manager._init_task_manager()
-    
+
     # 提交多个任务
     task_ids = []
     for i in range(100):
         task_id = task_manager.submit_task(simple_task, i)
         task_ids.append(task_id)
-    
+
     # 等待所有任务完成
     for task_id in task_ids:
         status = wait_for_task_completion(task_manager, task_id, timeout=15)
         assert status is not None
         assert status["status"] == "completed"
-    
+
     # 验证所有任务状态都可以查询到
     for task_id in task_ids:
         status = task_manager.get_task_status(task_id)
         assert status is not None
         assert status["status"] == "completed"
-    
+
     task_manager.shutdown()
+
+
+# ==================== 批量状态更新测试 ====================
+
+def test_batched_status_updater_basic():
+    """测试 BatchedStatusUpdater 基本功能"""
+    from fish_async_task.task_status import BatchedStatusUpdater
+    from fish_async_task.types import TaskStatus
+
+    # 跟踪更新的列表
+    updates = []
+
+    def update_func(task_id, status, **kwargs):
+        updates.append({"task_id": task_id, "status": status, **kwargs})
+
+    # 创建批量更新器（使用较小的批量大小便于测试）
+    updater = BatchedStatusUpdater(
+        update_func=update_func,
+        batch_size=5,
+        flush_interval=1.0,
+    )
+
+    # 添加3个更新（未达到批量大小）
+    updater.update("task_1", "running")
+    updater.update("task_2", "running")
+    updater.update("task_3", "running")
+
+    # 验证还没有执行更新
+    assert len(updates) == 0
+    assert updater.get_pending_count() == 3
+
+    # 添加更多更新达到批量大小
+    updater.update("task_4", "running")
+    updater.update("task_5", "running")  # 这应该触发批量更新
+
+    # 验证所有更新都已执行
+    assert len(updates) == 5
+    assert updater.get_pending_count() == 0
+
+    # 验证更新内容正确
+    for i, update in enumerate(updates, 1):
+        assert update["task_id"] == f"task_{i}"
+        assert update["status"] == "running"
+
+
+def test_batched_status_updater_flush_on_interval():
+    """测试 BatchedStatusUpdater 定时刷新"""
+    import time
+    from fish_async_task.task_status import BatchedStatusUpdater
+
+    updates = []
+
+    def update_func(task_id, status, **kwargs):
+        updates.append({"task_id": task_id, "status": status})
+
+    # 使用较短的刷新间隔
+    updater = BatchedStatusUpdater(
+        update_func=update_func,
+        batch_size=100,  # 设置较大的批量大小
+        flush_interval=0.2,  # 较短的刷新间隔
+    )
+
+    # 添加2个更新
+    updater.update("task_1", "running")
+    updater.update("task_2", "running")
+
+    # 验证还没有执行更新
+    assert len(updates) == 0
+
+    # 等待超过刷新间隔
+    time.sleep(0.3)
+
+    # 触发检查（添加新更新会触发检查）
+    updater.update("task_3", "running")
+
+    # 验证所有更新都已执行（包括之前的）
+    assert len(updates) == 3
+
+    updater.shutdown()
+
+
+def test_batched_status_updater_force_flush():
+    """测试 BatchedStatusUpdater 强制刷新"""
+    from fish_async_task.task_status import BatchedStatusUpdater
+
+    updates = []
+
+    def update_func(task_id, status, **kwargs):
+        updates.append({"task_id": task_id, "status": status})
+
+    updater = BatchedStatusUpdater(
+        update_func=update_func,
+        batch_size=100,
+        flush_interval=10.0,  # 较长的刷新间隔
+    )
+
+    # 添加更新
+    updater.update("task_1", "running")
+    updater.update("task_2", "running")
+
+    assert len(updates) == 0
+
+    # 强制刷新
+    pending = updater.force_flush()
+
+    assert pending == 2
+    assert len(updates) == 2
+
+    updater.shutdown()
+
+
+def test_batched_status_updater_shutdown():
+    """测试 BatchedStatusUpdater shutdown 时刷新"""
+    from fish_async_task.task_status import BatchedStatusUpdater
+
+    updates = []
+
+    def update_func(task_id, status, **kwargs):
+        updates.append({"task_id": task_id, "status": status})
+
+    updater = BatchedStatusUpdater(
+        update_func=update_func,
+        batch_size=100,
+        flush_interval=10.0,
+    )
+
+    # 添加更新
+    updater.update("task_1", "running")
+    updater.update("task_2", "running")
+
+    # shutdown 应该刷新所有待处理的更新
+    pending = updater.shutdown()
+
+    assert pending == 2
+    assert len(updates) == 2
+
+
+def test_task_status_manager_batch_update():
+    """测试 TaskStatusManager 批量更新"""
+    import logging
+    import time
+    from fish_async_task.task_status import TaskStatusManager
+
+    logger = logging.getLogger("test")
+
+    # 创建状态管理器（使用较小的批量大小便于测试）
+    manager = TaskStatusManager(
+        logger=logger,
+        task_status_ttl=3600,
+        max_task_status_count=10000,
+        batch_size=5,
+        batch_flush_interval=0.5,
+    )
+
+    # 验证批量更新已启用
+    assert manager._use_batch_update is True
+    assert manager._batch_updater is not None
+
+    # 更新状态（使用批量更新）
+    manager.update_task_status("task_1", "pending", submit_time=time.time())
+    manager.update_task_status("task_2", "running")
+    manager.update_task_status("task_3", "completed", result="result")
+
+    # 强制刷新以确保更新执行
+    manager._batch_updater.force_flush()
+
+    # 验证状态已更新
+    status1 = manager.get_task_status("task_1")
+    assert status1 is not None
+    assert status1["status"] == "pending"
+
+    status2 = manager.get_task_status("task_2")
+    assert status2 is not None
+    assert status2["status"] == "running"
+
+    status3 = manager.get_task_status("task_3")
+    assert status3 is not None
+    assert status3["status"] == "completed"
+    assert status3["result"] == "result"
+
+    # shutdown 并验证刷新
+    pending = manager.shutdown()
+    assert pending == 0  # 所有更新已执行
+
+
+def test_task_status_manager_disable_batch_update():
+    """测试禁用批量更新"""
+    import logging
+    from fish_async_task.task_status import TaskStatusManager
+
+    logger = logging.getLogger("test")
+
+    manager = TaskStatusManager(
+        logger=logger,
+        task_status_ttl=3600,
+        max_task_status_count=10000,
+    )
+
+    # 禁用批量更新
+    manager.enable_batch_update(False)
+
+    assert manager._use_batch_update is False
+    assert manager._batch_updater is None
+
+    # 更新状态（直接更新）
+    manager.update_task_status("task_1", "running")
+
+    # 验证状态已更新
+    status = manager.get_task_status("task_1")
+    assert status is not None
+    assert status["status"] == "running"
+
+    manager.shutdown()
+
+
+# ==================== 自适应线程管理测试 ====================
+
+def test_adaptive_worker_manager_basic():
+    """测试 AdaptiveWorkerManager 基本功能"""
+    from fish_async_task.worker import AdaptiveWorkerManager
+
+    manager = AdaptiveWorkerManager(
+        min_workers=2,
+        max_workers=10,
+        cpu_threshold=0.8,
+        queue_threshold_high=100,
+        queue_threshold_low=10,
+        scale_up_cooldown=5.0,
+        scale_down_cooldown=30.0,
+        use_cpu_monitoring=False,
+    )
+
+    # 验证配置
+    assert manager.min_workers == 2
+    assert manager.max_workers == 10
+    assert manager.cpu_threshold == 0.8
+
+    # 记录任务时间
+    manager.record_task_time(0.1)
+    manager.record_task_time(0.2)
+    manager.record_task_time(0.3)
+
+    # 验证平均任务时间（使用近似比较）
+    assert abs(manager.get_avg_task_time() - 0.2) < 0.001
+
+
+def test_adaptive_worker_manager_scale_up():
+    """测试 AdaptiveWorkerManager 扩容判断"""
+    from fish_async_task.worker import AdaptiveWorkerManager
+
+    manager = AdaptiveWorkerManager(
+        min_workers=2,
+        max_workers=10,
+        cpu_threshold=0.8,
+        queue_threshold_high=100,
+        queue_threshold_low=10,
+        scale_up_cooldown=0,  # 禁用冷却期便于测试
+        scale_down_cooldown=30.0,
+        use_cpu_monitoring=False,
+    )
+
+    # 初始状态，不应该扩容
+    assert manager.should_scale_up(5, 50) is False
+    assert manager.should_scale_up(5, 50, 0.5) is False
+
+    # 队列积压超过阈值，应该扩容
+    assert manager.should_scale_up(5, 150) is True
+
+    # 达到最大线程数，不应该扩容
+    assert manager.should_scale_up(10, 150) is False
+
+
+def test_adaptive_worker_manager_scale_down():
+    """测试 AdaptiveWorkerManager 缩容判断"""
+    from fish_async_task.worker import AdaptiveWorkerManager
+
+    manager = AdaptiveWorkerManager(
+        min_workers=2,
+        max_workers=10,
+        cpu_threshold=0.8,
+        queue_threshold_high=100,
+        queue_threshold_low=10,
+        scale_up_cooldown=5.0,
+        scale_down_cooldown=5.0,  # 使用正常的冷却期
+        use_cpu_monitoring=False,
+    )
+
+    # 初始状态，不应该缩容（队列非空）
+    assert manager.should_scale_down(5, 10) is False
+
+    # 队列为空但空闲时间不足，不应该缩容
+    assert manager.should_scale_down(5, 0, 2) is False
+
+    # 队列为空且空闲时间足够，应该缩容
+    assert manager.should_scale_down(5, 0, 10) is True
+
+    # 达到最小线程数，不应该缩容
+    assert manager.should_scale_down(2, 0, 35) is False
+
+
+def test_adaptive_worker_manager_cooldown():
+    """测试 AdaptiveWorkerManager 冷却期机制"""
+    from fish_async_task.worker import AdaptiveWorkerManager
+
+    manager = AdaptiveWorkerManager(
+        min_workers=2,
+        max_workers=10,
+        cpu_threshold=0.8,
+        queue_threshold_high=100,
+        queue_threshold_low=10,
+        scale_up_cooldown=5.0,
+        scale_down_cooldown=5.0,
+        use_cpu_monitoring=False,
+    )
+
+    # 触发扩容
+    assert manager.should_scale_up(5, 150) is True
+
+    # 冷却期内不应该再次扩容
+    assert manager.should_scale_up(5, 150) is False
+
+    # 触发缩容
+    assert manager.should_scale_down(6, 0, 35) is True
+
+    # 冷却期内不应该再次缩容
+    assert manager.should_scale_down(6, 0, 35) is False
+
+
+def test_adaptive_worker_manager_get_stats():
+    """测试 AdaptiveWorkerManager 统计信息"""
+    from fish_async_task.worker import AdaptiveWorkerManager
+
+    manager = AdaptiveWorkerManager(
+        min_workers=2,
+        max_workers=10,
+        cpu_threshold=0.8,
+        queue_threshold_high=100,
+        queue_threshold_low=10,
+        scale_up_cooldown=5.0,
+        scale_down_cooldown=30.0,
+        use_cpu_monitoring=False,
+    )
+
+    # 记录一些任务时间
+    for i in range(10):
+        manager.record_task_time(0.1 * i)
+
+    stats = manager.get_stats()
+
+    assert "min_workers" in stats
+    assert "max_workers" in stats
+    assert "cpu_threshold" in stats
+    assert "avg_task_time" in stats
+    assert "task_count" in stats
+    assert stats["task_count"] == 10
+
+
+def test_cpu_monitor():
+    """测试 CPUMonitor"""
+    from fish_async_task.worker import CPUMonitor
+
+    monitor = CPUMonitor(sample_interval=0.1, sample_count=2)
+
+    # 获取 CPU 使用率
+    cpu_usage = monitor.get_cpu_usage()
+
+    # 如果 psutil 不可用，应该返回 None
+    # 如果可用，应该返回 0.0-1.0 之间的值
+    if cpu_usage is not None:
+        assert 0.0 <= cpu_usage <= 1.0
+    else:
+        # psutil 不可用是预期行为
+        pass
+
+    # 获取 CPU 核心数
+    cpu_count = monitor.get_cpu_count()
+    assert cpu_count >= 1
+
+
+# ==================== 配置测试 ====================
+
+def test_config_loader_adaptive_worker():
+    """测试 ConfigLoader 自适应配置加载"""
+    import os
+    from fish_async_task.config import ConfigLoader
+    import logging
+
+    logger = logging.getLogger("test")
+    loader = ConfigLoader(logger)
+
+    # 保存原始环境变量
+    original_env = {}
+    for key in ["ADAPTIVE_WORKER_ENABLED", "WORKER_CPU_THRESHOLD", "WORKER_QUEUE_THRESHOLD_HIGH"]:
+        original_env[key] = os.environ.get(key)
+        if key in os.environ:
+            del os.environ[key]
+
+    try:
+        # 测试默认值
+        config = loader.load_adaptive_worker_config()
+        assert config["adaptive_worker_enabled"] is True
+        assert config["cpu_threshold"] == 0.8
+        assert config["queue_threshold_high"] == 100
+        assert config["queue_threshold_low"] == 10
+
+        # 测试自定义值
+        os.environ["ADAPTIVE_WORKER_ENABLED"] = "false"
+        os.environ["WORKER_CPU_THRESHOLD"] = "0.5"
+        os.environ["WORKER_QUEUE_THRESHOLD_HIGH"] = "200"
+
+        config = loader.load_adaptive_worker_config()
+        assert config["adaptive_worker_enabled"] is False
+        assert config["cpu_threshold"] == 0.5
+        assert config["queue_threshold_high"] == 200
+
+    finally:
+        # 恢复原始环境变量
+        for key, value in original_env.items():
+            if value is not None:
+                os.environ[key] = value
+
+
+def test_config_loader_invalid_adaptive_config():
+    """测试 ConfigLoader 无效自适应配置"""
+    import os
+    from fish_async_task.config import ConfigLoader
+    import logging
+
+    logger = logging.getLogger("test")
+    loader = ConfigLoader(logger)
+
+    # 保存原始环境变量
+    original_cpu = os.environ.get("WORKER_CPU_THRESHOLD")
+    original_queue = os.environ.get("WORKER_QUEUE_THRESHOLD_HIGH")
+
+    try:
+        # 测试无效的 CPU 阈值
+        os.environ["WORKER_CPU_THRESHOLD"] = "1.5"  # 超过最大值
+        config = loader.load_adaptive_worker_config()
+        assert config["cpu_threshold"] == loader.MAX_CPU_THRESHOLD
+
+        # 测试无效的队列阈值
+        os.environ["WORKER_CPU_THRESHOLD"] = "0.8"
+        os.environ["WORKER_QUEUE_THRESHOLD_HIGH"] = "-10"  # 无效值
+        config = loader.load_adaptive_worker_config()
+        assert config["queue_threshold_high"] == loader.DEFAULT_QUEUE_THRESHOLD_HIGH
+
+    finally:
+        # 恢复原始环境变量
+        if original_cpu is not None:
+            os.environ["WORKER_CPU_THRESHOLD"] = original_cpu
+        elif "WORKER_CPU_THRESHOLD" in os.environ:
+            del os.environ["WORKER_CPU_THRESHOLD"]
+
+        if original_queue is not None:
+            os.environ["WORKER_QUEUE_THRESHOLD_HIGH"] = original_queue
+        elif "WORKER_QUEUE_THRESHOLD_HIGH" in os.environ:
+            del os.environ["WORKER_QUEUE_THRESHOLD_HIGH"]
 
 
 if __name__ == "__main__":

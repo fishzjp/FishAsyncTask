@@ -104,6 +104,12 @@ class TaskManager:
             instance_key: 实例键名，应该与创建实例时使用的 key 一致
         """
         # 验证 instance_key 是否匹配（仅在实例已存在时）
+        #
+        # 注意：此检查存在 TOCTOU（Time-of-Check to Time-of-Use）窗口，
+        # 但在当前实现中是安全的：
+        # 1. _instance_key 在 __new__ 中设置，初始化后不会修改
+        # 2. 线程安全由 _instance_lock 保证
+        # 3. 此检查主要用于发现编程错误，不是关键安全检查
         if hasattr(self, "_instance_key") and self._instance_key != instance_key:
             # 安全访问 logger（可能在单例模式下尚未初始化）
             logger = getattr(self, "logger", logging.getLogger(__name__))
@@ -226,6 +232,16 @@ class TaskManager:
 
         # 在后台线程中执行扩缩容检查
         def delayed_scale_check() -> None:
+            """
+            延迟执行的扩缩容检查函数
+
+            此函数作为Timer回调执行，负责检查是否需要扩展工作线程。
+            使用Timer延迟执行可以避免每次提交任务都触发扩缩容检查，
+            减少锁竞争，提高高并发场景下的性能。
+
+            内部异常会被捕获并记录日志，不会传播到外部。
+            无论执行是否成功，都会在finally块中重置调度标志。
+            """
             try:
                 self.worker_manager.scale_up_workers_if_needed()
             except Exception as e:
@@ -332,6 +348,11 @@ class TaskManager:
             ...     if status['status'] == 'completed':
             ...         print(f"结果: {status.get('result')}")
         """
+        # 刷新待处理的批量更新，确保返回最新状态
+        if hasattr(self.task_executor, 'flush_pending_updates'):
+            self.task_executor.flush_pending_updates()
+        if hasattr(self.status_manager, '_batch_updater') and self.status_manager._batch_updater is not None:
+            self.status_manager._batch_updater.force_flush()
         return self.status_manager.get_task_status(task_id)
 
     def clear_task_status(self, task_id: Optional[str] = None) -> None:

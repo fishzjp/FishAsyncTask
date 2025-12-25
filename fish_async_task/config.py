@@ -8,6 +8,12 @@
 - MAX_TASK_STATUS_COUNT: 最大任务状态数量，默认10000
 - TASK_CLEANUP_INTERVAL: 清理间隔（秒），默认300
 - TASK_TIMEOUT: 任务超时时间（秒），默认无限制
+- ADAPTIVE_WORKER_ENABLED: 是否启用自适应线程管理，默认True
+- WORKER_CPU_THRESHOLD: CPU使用率阈值，默认0.8
+- WORKER_QUEUE_THRESHOLD_HIGH: 扩容队列积压阈值，默认100
+- WORKER_QUEUE_THRESHOLD_LOW: 缩容队列空闲阈值，默认10
+- WORKER_SCALE_UP_COOLDOWN: 扩容冷却期（秒），默认5.0
+- WORKER_SCALE_DOWN_COOLDOWN: 缩容冷却期（秒），默认30.0
 
 所有配置项都会进行验证，无效值会被拒绝并使用默认值。
 """
@@ -25,6 +31,17 @@ class ConfigLoader:
     MAX_TASK_STATUS_COUNT = 1000000  # 最大任务状态数：100万
     MAX_CLEANUP_INTERVAL = 3600  # 最大清理间隔：1小时
     MAX_TASK_TIMEOUT = 86400  # 最大任务超时：1天
+    MAX_CPU_THRESHOLD = 1.0  # 最大CPU阈值：100%
+    MAX_QUEUE_THRESHOLD = 10000  # 最大队列阈值：1万
+    MAX_COOLDOWN = 3600  # 最大冷却期：1小时
+
+    # 默认自适应配置
+    DEFAULT_ADAPTIVE_WORKER_ENABLED = True
+    DEFAULT_CPU_THRESHOLD = 0.8
+    DEFAULT_QUEUE_THRESHOLD_HIGH = 100
+    DEFAULT_QUEUE_THRESHOLD_LOW = 10
+    DEFAULT_SCALE_UP_COOLDOWN = 5.0
+    DEFAULT_SCALE_DOWN_COOLDOWN = 30.0
 
     def __init__(self, logger: logging.Logger):
         """
@@ -117,4 +134,120 @@ class ConfigLoader:
         except ValueError:
             self.logger.warning(f"无效的 TASK_TIMEOUT 格式: {task_timeout}，禁用超时")
             return None
+
+    def load_adaptive_worker_config(self) -> dict:
+        """
+        加载自适应线程管理配置
+
+        Returns:
+            dict: 自适应配置字典，包含以下键：
+                - adaptive_worker_enabled: 是否启用自适应线程管理
+                - cpu_threshold: CPU使用率阈值
+                - queue_threshold_high: 扩容队列积压阈值
+                - queue_threshold_low: 缩容队列空闲阈值
+                - scale_up_cooldown: 扩容冷却期
+                - scale_down_cooldown: 缩容冷却期
+        """
+        # 加载布尔配置
+        adaptive_enabled = os.getenv("ADAPTIVE_WORKER_ENABLED", "true").lower()
+        adaptive_worker_enabled = adaptive_enabled in ("true", "1", "yes")
+
+        # 加载浮点配置
+        cpu_threshold = self._load_float_config(
+            "WORKER_CPU_THRESHOLD",
+            self.DEFAULT_CPU_THRESHOLD,
+            "CPU_THRESHOLD",
+            0.0,
+            self.MAX_CPU_THRESHOLD,
+        )
+
+        queue_threshold_high = self.load_int_config(
+            "WORKER_QUEUE_THRESHOLD_HIGH",
+            self.DEFAULT_QUEUE_THRESHOLD_HIGH,
+            "QUEUE_THRESHOLD_HIGH",
+            1,
+            self.MAX_QUEUE_THRESHOLD,
+        )
+
+        queue_threshold_low = self.load_int_config(
+            "WORKER_QUEUE_THRESHOLD_LOW",
+            self.DEFAULT_QUEUE_THRESHOLD_LOW,
+            "QUEUE_THRESHOLD_LOW",
+            0,
+            self.MAX_QUEUE_THRESHOLD,
+        )
+
+        scale_up_cooldown = self._load_float_config(
+            "WORKER_SCALE_UP_COOLDOWN",
+            self.DEFAULT_SCALE_UP_COOLDOWN,
+            "SCALE_UP_COOLDOWN",
+            0.0,
+            self.MAX_COOLDOWN,
+        )
+
+        scale_down_cooldown = self._load_float_config(
+            "WORKER_SCALE_DOWN_COOLDOWN",
+            self.DEFAULT_SCALE_DOWN_COOLDOWN,
+            "SCALE_DOWN_COOLDOWN",
+            0.0,
+            self.MAX_COOLDOWN,
+        )
+
+        return {
+            "adaptive_worker_enabled": adaptive_worker_enabled,
+            "cpu_threshold": cpu_threshold,
+            "queue_threshold_high": queue_threshold_high,
+            "queue_threshold_low": queue_threshold_low,
+            "scale_up_cooldown": scale_up_cooldown,
+            "scale_down_cooldown": scale_down_cooldown,
+        }
+
+    def _load_float_config(
+        self,
+        env_key: str,
+        default_value: float,
+        config_name: str,
+        min_value: float = 0.0,
+        max_value: Optional[float] = None,
+    ) -> float:
+        """
+        加载并验证浮点配置项
+
+        Args:
+            env_key: 环境变量键名
+            default_value: 默认值
+            config_name: 配置项名称（用于日志）
+            min_value: 最小值
+            max_value: 最大值（可选）
+
+        Returns:
+            float: 验证后的配置值
+        """
+        env_value = os.getenv(env_key)
+        if env_value is None:
+            return default_value
+
+        try:
+            value = float(env_value)
+            if value < min_value:
+                self.logger.warning(
+                    f"无效的 {config_name}: {value}（必须大于等于{min_value}），"
+                    f"使用默认值 {default_value}"
+                )
+                return default_value
+
+            if max_value is not None and value > max_value:
+                self.logger.warning(
+                    f"无效的 {config_name}: {value}（不能超过{max_value}），"
+                    f"使用最大值 {max_value}"
+                )
+                return max_value
+
+            return value
+        except ValueError:
+            self.logger.warning(
+                f"无效的 {config_name} 格式: {env_value}（必须是浮点数），"
+                f"使用默认值 {default_value}"
+            )
+            return default_value
 

@@ -9,9 +9,129 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from collections import deque
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .types import TaskStatus, TaskStatusDict
+
+
+class ReadWriteLock:
+    """
+    读写锁实现
+
+    允许多个读操作并发执行，写操作独占访问。
+    基于 threading.Condition 实现，支持上下文管理器。
+
+    使用场景：
+    - 读多写少的场景，读操作可以并发执行
+    - 写操作需要独占访问，与所有读操作互斥
+
+    示例：
+        lock = ReadWriteLock()
+
+        # 读操作
+        with ReadWriteLockContext(lock, write=False):
+            # 多个线程可以同时进入这里
+            data = self._data
+
+        # 写操作
+        with ReadWriteLockContext(lock, write=True):
+            # 同一时间只有一个线程可以进入这里
+            self._data = new_data
+    """
+
+    def __init__(self):
+        """初始化读写锁"""
+        self._read_ready = threading.Condition(threading.RLock())
+        self._readers = 0
+
+    def acquire_read(self) -> None:
+        """
+        获取读锁
+
+        多个线程可以同时获取读锁。
+        """
+        with self._read_ready:
+            self._readers += 1
+
+    def release_read(self) -> None:
+        """
+        释放读锁
+
+        当所有读锁都被释放后，唤醒等待的写操作。
+        """
+        with self._read_ready:
+            self._readers -= 1
+            if self._readers == 0:
+                self._read_ready.notify_all()
+
+    def acquire_write(self) -> None:
+        """
+        获取写锁
+
+        写锁是独占的，会等待所有读操作完成后才能获取。
+        """
+        self._read_ready.acquire()
+        while self._readers > 0:
+            self._read_ready.wait()
+
+    def release_write(self) -> None:
+        """
+        释放写锁
+
+        释放后，其他读操作或写操作可以继续执行。
+        """
+        self._read_ready.release()
+
+
+class ReadWriteLockContext:
+    """
+    读写锁上下文管理器
+
+    提供便捷的锁获取和释放方式。
+    """
+
+    def __init__(self, lock: ReadWriteLock, write: bool = False):
+        """
+        初始化上下文管理器
+
+        Args:
+            lock: 读写锁实例
+            write: 是否为写操作（True=写锁，False=读锁）
+        """
+        self._lock = lock
+        self._write = write
+
+    def __enter__(self) -> "ReadWriteLockContext":
+        """
+        获取锁并返回上下文管理器实例
+
+        根据 write 参数决定获取读锁或写锁。
+        读锁允许并发获取，写锁独占访问。
+
+        Returns:
+            ReadWriteLockContext: 返回自身实例，用于 with 语句块
+        """
+        if self._write:
+            self._lock.acquire_write()
+        else:
+            self._lock.acquire_read()
+        return self
+
+    def __exit__(self, *args) -> None:
+        """
+        释放锁
+
+        释放之前获取的读锁或写锁。
+        释放后，其他读操作或写操作可以继续执行。
+
+        Args:
+            *args: 接收异常信息参数（如果 with 语句中发生异常）
+        """
+        if self._write:
+            self._lock.release_write()
+        else:
+            self._lock.release_read()
 
 
 class ShardedTaskStatusWithExpiry:
@@ -37,10 +157,10 @@ class ShardedTaskStatusWithExpiry:
         """
         self.shard_count = shard_count
         self.ttl = ttl
-        
-        # 每个分片包含：状态字典、锁、过期时间堆
+
+        # 每个分片包含：状态字典、读写锁、过期时间堆
         self.shards: List[Dict[str, TaskStatusDict]] = [dict() for _ in range(shard_count)]
-        self.locks: List[threading.Lock] = [threading.Lock() for _ in range(shard_count)]
+        self.rw_locks: List[ReadWriteLock] = [ReadWriteLock() for _ in range(shard_count)]
         # 每个分片的过期时间堆：(expiry_time, task_id)
         self.expiry_heaps: List[List[Tuple[float, str]]] = [[] for _ in range(shard_count)]
     
@@ -68,7 +188,7 @@ class ShardedTaskStatusWithExpiry:
             Optional[TaskStatusDict]: 任务状态字典，如果任务不存在则返回None
         """
         shard_idx = self._get_shard_index(task_id)
-        with self.locks[shard_idx]:
+        with ReadWriteLockContext(self.rw_locks[shard_idx], write=False):
             return self.shards[shard_idx].get(task_id)
     
     def update_status(
@@ -86,10 +206,10 @@ class ShardedTaskStatusWithExpiry:
             current_status: 当前状态（如果已知，避免重复查询）
         """
         shard_idx = self._get_shard_index(task_id)
-        with self.locks[shard_idx]:
+        with ReadWriteLockContext(self.rw_locks[shard_idx], write=True):
             # 更新状态字典
             self.shards[shard_idx][task_id] = status
-            
+
             # 如果任务已完成或失败，添加到过期时间堆
             if status.get("status") in ("completed", "failed"):
                 end_time = status.get("end_time")
@@ -105,7 +225,7 @@ class ShardedTaskStatusWithExpiry:
             task_id: 任务ID
         """
         shard_idx = self._get_shard_index(task_id)
-        with self.locks[shard_idx]:
+        with ReadWriteLockContext(self.rw_locks[shard_idx], write=True):
             self.shards[shard_idx].pop(task_id, None)
             # 注意：堆中的条目会在清理时自动处理，不需要立即移除
     
@@ -129,26 +249,26 @@ class ShardedTaskStatusWithExpiry:
         for shard_idx in range(self.shard_count):
             if remaining_cleanup is not None and remaining_cleanup <= 0:
                 break
-            
-            with self.locks[shard_idx]:
+
+            with ReadWriteLockContext(self.rw_locks[shard_idx], write=True):
                 heap = self.expiry_heaps[shard_idx]
                 shard_dict = self.shards[shard_idx]
-                
+
                 # 清理堆顶的过期任务
                 while heap:
                     if remaining_cleanup is not None and remaining_cleanup <= 0:
                         break
-                    
+
                     # 获取堆顶元素（while循环已确保堆非空）
                     expiry_time, task_id = heap[0]
-                    
+
                     if expiry_time > now:
                         # 堆顶任务未过期，停止清理此分片
                         break
-                    
+
                     # 移除堆顶
                     heapq.heappop(heap)
-                    
+
                     # 从状态字典中移除（如果存在且确实过期）
                     if task_id in shard_dict:
                         status = shard_dict[task_id]
@@ -158,7 +278,7 @@ class ShardedTaskStatusWithExpiry:
                             cleaned_count += 1
                             if remaining_cleanup is not None:
                                 remaining_cleanup -= 1
-        
+
         return cleaned_count
     
     def _collect_all_tasks(self) -> List[Tuple[float, str, int, TaskStatusDict]]:
@@ -239,42 +359,42 @@ class ShardedTaskStatusWithExpiry:
         Returns:
             int: 清理的任务数量
         """
-        acquired_locks: List[threading.Lock] = []
-        
+        acquired_locks: List[ReadWriteLock] = []
+
         try:
-            # 按顺序获取所有锁（避免死锁）
-            for lock in self.locks:
-                lock.acquire()
-                acquired_locks.append(lock)
-            
+            # 按顺序获取所有写锁（避免死锁）
+            for rw_lock in self.rw_locks:
+                rw_lock.acquire_write()
+                acquired_locks.append(rw_lock)
+
             # 在持有所有锁的情况下统计总任务数，避免竞态条件
             total_count = sum(len(shard) for shard in self.shards)
             if total_count <= max_count:
                 return 0
-            
+
             # 收集所有任务并按时间排序
             all_tasks = self._collect_all_tasks()
-            
+
             # 保留最新的 max_count 个任务
             tasks_to_keep: set = set()
             for _, task_id, _, _ in all_tasks[:max_count]:
                 tasks_to_keep.add(task_id)
-            
+
             # 清理旧任务
             cleaned_count = self._cleanup_old_tasks(all_tasks, tasks_to_keep, max_count)
-            
+
             # 清理堆中对应的过期条目
             self._rebuild_expiry_heaps(tasks_to_keep)
-            
+
             return cleaned_count
         except Exception:
             # 确保即使发生异常也能释放已获取的锁
             raise
         finally:
             # 逆序释放所有已获取的锁（与获取顺序相反）
-            for lock in reversed(acquired_locks):
+            for rw_lock in reversed(acquired_locks):
                 try:
-                    lock.release()
+                    rw_lock.release_write()
                 except Exception:
                     # 锁可能已被释放，忽略异常
                     pass
@@ -287,47 +407,47 @@ class ShardedTaskStatusWithExpiry:
             Dict[str, TaskStatusDict]: 所有任务状态字典
         """
         result: Dict[str, TaskStatusDict] = {}
-        acquired_locks: List[threading.Lock] = []
-        
+        acquired_locks: List[ReadWriteLock] = []
+
         try:
-            # 按顺序获取所有锁，避免死锁
-            for lock in self.locks:
-                lock.acquire()
-                acquired_locks.append(lock)
-            
+            # 按顺序获取所有读锁，避免死锁
+            for rw_lock in self.rw_locks:
+                rw_lock.acquire_read()
+                acquired_locks.append(rw_lock)
+
             for shard in self.shards:
                 result.update(shard)
         finally:
-            # 逆序释放所有已获取的锁
-            for lock in reversed(acquired_locks):
+            # 逆序释放所有已获取的读锁
+            for rw_lock in reversed(acquired_locks):
                 try:
-                    lock.release()
+                    rw_lock.release_read()
                 except Exception:
                     pass
-        
+
         return result
     
     def clear_all(self) -> None:
         """
         清空所有任务状态
         """
-        acquired_locks: List[threading.Lock] = []
-        
+        acquired_locks: List[ReadWriteLock] = []
+
         try:
-            # 按顺序获取所有锁
-            for lock in self.locks:
-                lock.acquire()
-                acquired_locks.append(lock)
-            
+            # 按顺序获取所有写锁
+            for rw_lock in self.rw_locks:
+                rw_lock.acquire_write()
+                acquired_locks.append(rw_lock)
+
             for shard in self.shards:
                 shard.clear()
             for heap in self.expiry_heaps:
                 heap.clear()
         finally:
-            # 逆序释放所有已获取的锁
-            for lock in reversed(acquired_locks):
+            # 逆序释放所有已获取的写锁
+            for rw_lock in reversed(acquired_locks):
                 try:
-                    lock.release()
+                    rw_lock.release_write()
                 except Exception:
                     pass
     
@@ -368,29 +488,29 @@ class ShardedTaskStatusWithExpiry:
 
         # 收集所有当前任务状态
         all_tasks: Dict[str, TaskStatusDict] = {}
-        acquired_locks: List[threading.Lock] = []
+        acquired_locks: List[ReadWriteLock] = []
 
         try:
-            # 获取所有锁
-            for lock in self.locks:
-                lock.acquire()
-                acquired_locks.append(lock)
+            # 获取所有写锁
+            for rw_lock in self.rw_locks:
+                rw_lock.acquire_write()
+                acquired_locks.append(rw_lock)
 
             # 收集所有任务
             for shard in self.shards:
                 all_tasks.update(shard)
 
         finally:
-            # 释放所有锁
-            for lock in reversed(acquired_locks):
+            # 释放所有写锁
+            for rw_lock in reversed(acquired_locks):
                 try:
-                    lock.release()
+                    rw_lock.release_write()
                 except Exception:
                     pass
 
         # 创建新的分片结构
         new_shards: List[Dict[str, TaskStatusDict]] = [dict() for _ in range(new_shard_count)]
-        new_locks: List[threading.Lock] = [threading.Lock() for _ in range(new_shard_count)]
+        new_rwlocks: List[ReadWriteLock] = [ReadWriteLock() for _ in range(new_shard_count)]
         new_expiry_heaps: List[List[Tuple[float, str]]] = [[] for _ in range(new_shard_count)]
 
         # 重新分配任务到新的分片
@@ -408,7 +528,7 @@ class ShardedTaskStatusWithExpiry:
         # 原子性地替换旧的分片结构
         with self._resizing_lock:
             self.shards = new_shards
-            self.locks = new_locks
+            self.rw_locks = new_rwlocks
             self.expiry_heaps = new_expiry_heaps
             self.shard_count = new_shard_count
 
@@ -418,43 +538,237 @@ class ShardedTaskStatusWithExpiry:
     _resizing_lock = threading.Lock()
 
 
+class BatchedStatusUpdater:
+    """
+    批量状态更新器
+
+    收集多个状态更新，批量提交到分片存储，减少锁获取次数，提升写入性能。
+    支持按批量大小和刷新间隔触发批量提交。
+
+    使用场景：
+    - 高并发写入场景，减少状态更新的锁竞争
+    - 需要批量处理大量状态更新的场景
+
+    示例：
+        def update_func(task_id, status, **kwargs):
+            # 实际的更新逻辑
+            pass
+
+        updater = BatchedStatusUpdater(
+            update_func=update_func,
+            batch_size=100,
+            flush_interval=0.1
+        )
+
+        # 添加更新到批量队列
+        updater.update("task_1", "running")
+        updater.update("task_2", "completed", result="result")
+
+        # shutdown时自动刷新所有待处理的更新
+        updater.shutdown()
+    """
+
+    def __init__(
+        self,
+        update_func: "Callable[..., None]",
+        batch_size: int = 100,
+        flush_interval: float = 0.1,
+    ):
+        """
+        初始化批量状态更新器
+
+        Args:
+            update_func: 实际的状态更新函数，接收 task_id, status, **kwargs
+            batch_size: 批量大小，达到此数量时立即刷新
+            flush_interval: 刷新间隔（秒），达到此时间间隔时刷新
+        """
+        self._update_func = update_func
+        self.batch_size = batch_size
+        self.flush_interval = flush_interval
+
+        # 批量队列：存储 (task_id, status, kwargs)
+        self._batch: deque = deque()
+        self._batch_lock = threading.Lock()
+        self._last_flush = time.time()
+
+    def update(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+        result: Any = None,
+        error: Optional[str] = None,
+        submit_time: Optional[float] = None,
+    ) -> None:
+        """
+        添加状态更新到批量队列
+
+        Args:
+            task_id: 任务ID
+            status: 任务状态
+            start_time: 任务开始时间（可选）
+            end_time: 任务结束时间（可选）
+            result: 任务执行结果（可选）
+            error: 错误信息（可选）
+            submit_time: 任务提交时间（可选）
+        """
+        update_item = {
+            "task_id": task_id,
+            "status": status,
+            "start_time": start_time,
+            "end_time": end_time,
+            "result": result,
+            "error": error,
+            "submit_time": submit_time,
+        }
+
+        with self._batch_lock:
+            self._batch.append(update_item)
+
+            # 检查是否需要刷新
+            current_time = time.time()
+            time_since_last_flush = current_time - self._last_flush
+
+            # 如果批量大小达到阈值或超过刷新间隔，立即刷新
+            if len(self._batch) >= self.batch_size or time_since_last_flush >= self.flush_interval:
+                self._last_flush = current_time
+                self._flush()
+
+    def check_and_flush(self) -> None:
+        """
+        手动检查并执行批量刷新
+
+        可以在外部定期调用此方法以触发定时刷新。
+        """
+        self._check_and_flush()
+
+    def _flush(self) -> None:
+        """刷新批量更新（需要在 batch_lock 保护下调用）"""
+        if not self._batch:
+            return
+
+        # 获取批量数据（在锁保护下）
+        batch_data = list(self._batch)
+        self._batch.clear()
+
+        # 释放锁后执行更新
+        # 注意：这里假设调用者已经持有锁，我们需要在finally中重新获取
+        # 但由于调用者可能使用with语句，我们不使用release/acquire
+        # 而是直接执行更新（锁仍在持有状态，但允许其他操作等待）
+        try:
+            for item in batch_data:
+                try:
+                    self._update_func(
+                        item["task_id"],
+                        item["status"],
+                        start_time=item["start_time"],
+                        end_time=item["end_time"],
+                        result=item["result"],
+                        error=item["error"],
+                        submit_time=item["submit_time"],
+                    )
+                except Exception as e:
+                    # 记录错误但不影响其他更新
+                    logging.getLogger(__name__).error(
+                        f"批量更新任务状态失败 [{type(e).__name__}]: {e}",
+                        exc_info=True
+                    )
+        except Exception:
+            # 如果执行更新出错，重新将数据放回队列
+            with self._batch_lock:
+                self._batch.extend(batch_data)
+            raise
+
+    def _check_and_flush(self) -> None:
+        """检查是否需要刷新批量更新（基于时间间隔）"""
+        with self._batch_lock:
+            if not self._batch:
+                return
+
+            if time.time() - self._last_flush >= self.flush_interval:
+                self._flush()
+
+    def force_flush(self) -> int:
+        """
+        强制刷新所有待处理的更新
+
+        Returns:
+            int: 刷新前队列中的更新数量
+        """
+        with self._batch_lock:
+            pending_count = len(self._batch)
+            if pending_count > 0:
+                self._flush()
+            return pending_count
+
+    def get_pending_count(self) -> int:
+        """
+        获取当前待处理的更新数量
+
+        Returns:
+            int: 待处理的更新数量
+        """
+        with self._batch_lock:
+            return len(self._batch)
+
+    def shutdown(self) -> int:
+        """
+        关闭更新器，刷新所有待处理的更新
+
+        Returns:
+            int: 刷新前队列中的更新数量
+        """
+        return self.force_flush()
+
+
 class TaskStatusManager:
     """
     任务状态管理器
-    
+
     负责任务状态的存储、更新和查询。
     使用分片锁和优先级队列优化性能，支持高并发操作。
-    
+    支持批量状态更新，减少锁获取次数，提升写入性能。
+
     线程安全说明：
     - 使用分片锁，不同分片的操作可以并发执行
     - 同一分片内的操作串行化，保证线程安全
     - 清理操作支持增量清理，避免长时间阻塞
+    - 批量更新器内部使用队列和锁，保证线程安全
     """
-    
+
     # 配置常量
     DEFAULT_SHARD_COUNT = 16  # 默认分片数量
     DEFAULT_MAX_CLEANUP_PER_BATCH = 100  # 每次清理的最大任务数量
-    
+
+    # 批量更新配置
+    DEFAULT_BATCH_SIZE = 100  # 默认批量大小
+    DEFAULT_BATCH_FLUSH_INTERVAL = 0.1  # 默认批量刷新间隔（秒）
+
     def __init__(
         self,
         logger: logging.Logger,
         task_status_ttl: int,
         max_task_status_count: int,
         shard_count: Optional[int] = None,
+        batch_size: Optional[int] = None,
+        batch_flush_interval: Optional[float] = None,
     ):
         """
         初始化任务状态管理器
-        
+
         Args:
             logger: 日志记录器
             task_status_ttl: 任务状态TTL（秒）
             max_task_status_count: 最大任务状态数量
             shard_count: 分片数量，默认从环境变量 TASK_STATUS_SHARD_COUNT 读取，或使用16
+            batch_size: 批量更新大小（可选，默认使用类常量）
+            batch_flush_interval: 批量刷新间隔（秒）（可选，默认使用类常量）
         """
         self.logger = logger
         self.task_status_ttl = task_status_ttl
         self.max_task_status_count = max_task_status_count
-        
+
         # 从环境变量读取分片数量，默认16
         if shard_count is None:
             shard_count_env = os.getenv("TASK_STATUS_SHARD_COUNT")
@@ -473,9 +787,74 @@ class TaskStatusManager:
                     shard_count = self.DEFAULT_SHARD_COUNT
             else:
                 shard_count = self.DEFAULT_SHARD_COUNT
-        
+
         # 使用分片存储
         self.sharded_status = ShardedTaskStatusWithExpiry(shard_count, task_status_ttl)
+
+        # 批量更新配置
+        self._batch_size = batch_size if batch_size is not None else self.DEFAULT_BATCH_SIZE
+        self._batch_flush_interval = batch_flush_interval if batch_flush_interval is not None else self.DEFAULT_BATCH_FLUSH_INTERVAL
+
+        # 初始化批量更新器
+        self._batch_updater: Optional[BatchedStatusUpdater] = None
+        self._use_batch_update = True
+
+        # 自动初始化批量更新器
+        self.enable_batch_update(True)
+
+    def enable_batch_update(self, enabled: bool = True) -> None:
+        """
+        启用或禁用批量更新
+
+        Args:
+            enabled: 是否启用批量更新
+        """
+        self._use_batch_update = enabled
+
+        if enabled and self._batch_updater is None:
+            # 初始化批量更新器
+            self._batch_updater = BatchedStatusUpdater(
+                update_func=self._do_update_task_status,
+                batch_size=self._batch_size,
+                flush_interval=self._batch_flush_interval,
+            )
+        elif not enabled and self._batch_updater is not None:
+            # 刷新并禁用批量更新
+            self._batch_updater.shutdown()
+            self._batch_updater = None
+
+    def _do_update_task_status(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+        result: Any = None,
+        error: Optional[str] = None,
+        submit_time: Optional[float] = None,
+    ) -> None:
+        """
+        实际执行状态更新（批量更新回调）
+
+        Args:
+            task_id: 任务ID
+            status: 任务状态
+            start_time: 任务开始时间（可选）
+            end_time: 任务结束时间（可选）
+            result: 任务执行结果（可选）
+            error: 错误信息（可选）
+            submit_time: 任务提交时间（可选）
+        """
+        # 获取当前状态（如果存在）
+        current_status = self.sharded_status.get_status(task_id) or {}
+
+        # 合并任务状态
+        new_status = self._merge_task_status(
+            current_status, status, start_time, end_time, result, error, submit_time
+        )
+
+        # 更新分片存储
+        self.sharded_status.update_status(task_id, new_status, current_status)
     
     def _merge_task_status(
         self,
@@ -548,7 +927,7 @@ class TaskStatusManager:
     ) -> None:
         """
         更新任务状态（线程安全）
-        
+
         Args:
             task_id: 任务ID
             status: 任务状态（pending, running, completed, failed）
@@ -557,20 +936,24 @@ class TaskStatusManager:
             result: 任务执行结果（可选）
             error: 错误信息（可选）
             submit_time: 任务提交时间（可选，仅用于pending状态）
-            
+
         Note:
             此方法会保留已存在的 start_time，除非明确提供新的 start_time。
         """
-        # 获取当前状态（如果存在）
-        current_status = self.sharded_status.get_status(task_id) or {}
-        
-        # 合并任务状态
-        new_status = self._merge_task_status(
-            current_status, status, start_time, end_time, result, error, submit_time
-        )
-        
-        # 更新分片存储
-        self.sharded_status.update_status(task_id, new_status, current_status)
+        if self._use_batch_update and self._batch_updater is not None:
+            # 使用批量更新
+            self._batch_updater.update(
+                task_id, status,
+                start_time=start_time, end_time=end_time,
+                result=result, error=error, submit_time=submit_time
+            )
+        else:
+            # 直接更新
+            self._do_update_task_status(
+                task_id, status,
+                start_time=start_time, end_time=end_time,
+                result=result, error=error, submit_time=submit_time
+            )
     
     def get_task_status(self, task_id: str) -> Optional[TaskStatusDict]:
         """
@@ -668,5 +1051,29 @@ class TaskStatusManager:
             self.logger.error(f"分片数量调整失败")
 
         return success
+
+    def shutdown(self) -> int:
+        """
+        关闭状态管理器，刷新所有待处理的批量更新
+
+        Returns:
+            int: 刷新前待处理的更新数量
+        """
+        pending_count = 0
+        if self._batch_updater is not None:
+            pending_count = self._batch_updater.shutdown()
+            self._batch_updater = None
+        return pending_count
+
+    def get_pending_update_count(self) -> int:
+        """
+        获取当前待处理的更新数量
+
+        Returns:
+            int: 待处理的更新数量
+        """
+        if self._batch_updater is not None:
+            return self._batch_updater.get_pending_count()
+        return 0
     
 
