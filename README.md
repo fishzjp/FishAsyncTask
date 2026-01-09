@@ -46,8 +46,16 @@ pip install git+https://github.com/fishzjp/FishAsyncTask.git
 ```bash
 git clone https://github.com/fishzjp/FishAsyncTask.git
 cd FishAsyncTask
-pip install -e .
+pip install -e ".[dev,performance]"
+pre-commit install
 ```
+
+**开发依赖包括**：
+- `pytest`、`pytest-cov`、`pytest-benchmark` - 测试框架
+- `black`、`isort` - 代码格式化
+- `mypy`、`interrogate` - 代码质量检查
+- `locust` - 负载测试
+- `psutil`、`redis`、`huey`、`dramatiq` - 性能测试依赖
 
 > 📖 详细的安装说明请参考 [安装文档](docs/INSTALL.md)
 
