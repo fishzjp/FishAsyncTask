@@ -44,7 +44,13 @@ jobs:
 
     - name: Run pytest
       run: |
-        pytest tests/ -v --cov=fish_async_task --cov-report=xml
+        pytest tests/ -v \
+          --cov=fish_async_task \
+          --cov-report=term-missing:skip-covered \
+          --cov-report=html \
+          --cov-report=xml \
+          --cov-fail-under=80 \
+          --cov-branch
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3

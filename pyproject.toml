@@ -68,12 +68,9 @@ line_length = 100
 
 [tool.pytest.ini_options]
 addopts = [
-    "--cov=fish_async_task",
-    "--cov-report=term-missing:skip-covered",
-    "--cov-report=html",
-    "--cov-report=xml",
-    "--cov-fail-under=80",
-    "--cov-branch",
+    "-v",
+    "--strict-markers",
+    "--tb=short",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
