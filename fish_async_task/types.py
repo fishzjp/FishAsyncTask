@@ -28,10 +28,37 @@ class TaskStatusDict(TypedDict, total=False):
 
     所有可选字段都使用 Optional 注解，明确标识该字段可能为 None。
     """
+
     status: Optional[TaskStatus]  # pending, running, completed, failed
     submit_time: Optional[float]  # 任务提交时间（Unix时间戳）
     start_time: Optional[float]  # 任务开始执行时间（Unix时间戳）
     end_time: Optional[float]  # 任务结束时间（Unix时间戳）
     result: Optional[Any]  # 任务执行结果（仅completed状态）
     error: Optional[str]  # 错误信息（仅failed状态）
+    worker_id: Optional[str]  # 执行任务的工作线程ID（性能优化新增）
 
+
+# 性能优化相关类型定义
+class ShardedTaskStatusDict(TypedDict):
+    """分片任务状态字典，包含分片索引信息"""
+
+    shard_index: int  # 分片索引
+    task_status: TaskStatusDict  # 任务状态数据
+
+
+class BatchedUpdate(TypedDict):
+    """批量更新项"""
+
+    task_id: str
+    status: TaskStatusDict
+
+
+class ScalingMetrics(TypedDict):
+    """自适应扩展指标"""
+
+    current_workers: int  # 当前工作线程数
+    avg_task_time: float  # 平均任务执行时间（秒）
+    cpu_usage: Optional[float]  # CPU 使用率（0-1），如果 psutil 不可用则为 None
+    last_scale_up_time: float  # 上次扩展时间（Unix时间戳）
+    last_scale_down_time: float  # 上次缩减时间（Unix时间戳）
+    queue_size: int  # 当前队列大小

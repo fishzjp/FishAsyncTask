@@ -17,22 +17,22 @@ dramatiq 性能对比测试
 import gc
 import os
 import time
-import pytest
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, List, Optional
+
 import dramatiq
 import psutil
-from typing import Any, Callable, Dict, List, Optional
-from concurrent.futures import ThreadPoolExecutor
-
+import pytest
 
 # 导入 FishAsyncTask 相关模块
 from fish_async_task.task_manager import TaskManager as FishTaskManager
 from tests.performance.conftest import (
     TestConfig,
-    wait_for_all_tasks,
-    create_test_tasks,
     cleanup_task_manager_instances,
-    print_test_header,
+    create_test_tasks,
     print_test_footer,
+    print_test_header,
+    wait_for_all_tasks,
 )
 from tests.performance.utils import PerformanceMetrics
 
@@ -84,7 +84,7 @@ def dramatiq_broker(redis_available):
 def dramatiq_worker(redis_available):
     """创建 dramatiq 工作进程"""
     import multiprocessing
-    
+
     # 定义任务执行器
     def run_worker():
         worker = dramatiq.Worker(

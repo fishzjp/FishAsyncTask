@@ -1,0 +1,43 @@
+interrogate:
+  # 忽略的模块
+  ignore:
+    - setup_cython
+    - tests/*
+    - */tests/*
+
+  # 忽略的方法
+  ignore_methods:
+    - __init__
+    - __repr__
+    - __str__
+
+  # 文档覆盖率阈值
+  fail_under: 80.0
+
+  # 颜色输出
+  color: true
+
+  # 详细输出
+  verbose: 0
+
+  # 排除模式
+  exclude:
+    - setup.py
+    - build/
+    - dist/
+    - */.local/*
+
+  # 忽略模块的私有方法
+  ignore_private_methods: true
+
+  # 忽略模块的魔术方法
+  ignore_magic_methods: true
+
+  # 忽略模块的半私有方法(以_开头的方法)
+  ignore_semiprivate_methods: true
+
+  # 忽略init模块
+  ignore_init_module: false
+
+  # 忽略init方法中不需要文档的类
+  ignore_init_method: false

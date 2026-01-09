@@ -17,21 +17,21 @@ huey 性能对比测试
 import gc
 import os
 import time
-import pytest
-import psutil
-from typing import Any, Callable, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, List, Optional
 
+import psutil
+import pytest
 
 # 导入 FishAsyncTask 相关模块
 from fish_async_task.task_manager import TaskManager as FishTaskManager
 from tests.performance.conftest import (
     TestConfig,
-    wait_for_all_tasks,
-    create_test_tasks,
     cleanup_task_manager_instances,
-    print_test_header,
+    create_test_tasks,
     print_test_footer,
+    print_test_header,
+    wait_for_all_tasks,
 )
 from tests.performance.utils import PerformanceMetrics
 

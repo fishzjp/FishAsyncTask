@@ -15,11 +15,19 @@
 - WORKER_SCALE_UP_COOLDOWN: 扩容冷却期（秒），默认5.0
 - WORKER_SCALE_DOWN_COOLDOWN: 缩容冷却期（秒），默认30.0
 
+性能优化配置项：
+- SHARD_COUNT: 分片数量，默认16（建议为2的幂次）
+- BATCH_UPDATE_BUFFER_SIZE: 批量更新缓冲区大小，默认100
+- BATCH_UPDATE_INTERVAL: 批量更新刷新间隔（秒），默认0.1
+- ENABLE_AUTO_CLEANUP: 是否启用自动清理，默认True
+- ENABLE_BATCH_UPDATES: 是否启用批量更新，默认False
+- ENABLE_ADAPTIVE_SCALING: 是否启用自适应扩展，默认False
+
 所有配置项都会进行验证，无效值会被拒绝并使用默认值。
 """
 
-import os
 import logging
+import os
 from typing import Optional
 
 
@@ -43,6 +51,19 @@ class ConfigLoader:
     DEFAULT_SCALE_UP_COOLDOWN = 5.0
     DEFAULT_SCALE_DOWN_COOLDOWN = 30.0
 
+    # 性能优化配置默认值
+    DEFAULT_SHARD_COUNT = 16  # 默认分片数量
+    DEFAULT_BATCH_UPDATE_BUFFER_SIZE = 100  # 默认批量更新缓冲区大小
+    DEFAULT_BATCH_UPDATE_INTERVAL = 0.1  # 默认批量更新刷新间隔（秒）
+    DEFAULT_ENABLE_AUTO_CLEANUP = True  # 默认启用自动清理
+    DEFAULT_ENABLE_BATCH_UPDATES = False  # 默认禁用批量更新
+    DEFAULT_ENABLE_ADAPTIVE_SCALING = False  # 默认禁用自适应扩展
+
+    # 性能优化配置最大值
+    MAX_SHARD_COUNT = 1024  # 最大分片数量
+    MAX_BATCH_UPDATE_BUFFER_SIZE = 10000  # 最大批量更新缓冲区大小
+    MAX_BATCH_UPDATE_INTERVAL = 60.0  # 最大批量更新刷新间隔（秒）
+
     def __init__(self, logger: logging.Logger):
         """
         初始化配置加载器
@@ -53,8 +74,12 @@ class ConfigLoader:
         self.logger = logger
 
     def load_int_config(
-        self, env_key: str, default_value: int, config_name: str,
-        min_value: int = 1, max_value: Optional[int] = None
+        self,
+        env_key: str,
+        default_value: int,
+        config_name: str,
+        min_value: int = 1,
+        max_value: Optional[int] = None,
     ) -> int:
         """
         加载并验证整数配置项
@@ -101,7 +126,7 @@ class ConfigLoader:
                 f"使用默认值 {default_value}"
             )
             return default_value
-    
+
     def load_timeout_config(self, default_value: Optional[float]) -> Optional[float]:
         """
         加载并验证任务超时配置
@@ -148,9 +173,10 @@ class ConfigLoader:
                 - scale_up_cooldown: 扩容冷却期
                 - scale_down_cooldown: 缩容冷却期
         """
-        # 加载布尔配置
-        adaptive_enabled = os.getenv("ADAPTIVE_WORKER_ENABLED", "true").lower()
-        adaptive_worker_enabled = adaptive_enabled in ("true", "1", "yes")
+        # 加载布尔配置（使用改进的解析方法）
+        adaptive_worker_enabled = self._load_bool_config(
+            "ADAPTIVE_WORKER_ENABLED", self.DEFAULT_ADAPTIVE_WORKER_ENABLED
+        )
 
         # 加载浮点配置
         cpu_threshold = self._load_float_config(
@@ -251,3 +277,90 @@ class ConfigLoader:
             )
             return default_value
 
+    def _load_bool_config(self, env_key: str, default: bool) -> bool:
+        """
+        加载布尔配置，提供宽容的解析
+
+        Args:
+            env_key: 环境变量键名
+            default: 默认值
+
+        Returns:
+            bool: 解析后的布尔值
+
+        Note:
+            支持的真值：true, 1, yes, on, enabled（不区分大小写）
+            支持的假值：false, 0, no, off, disabled（不区分大小写）
+        """
+        env_value = os.getenv(env_key)
+        if env_value is None:
+            return default
+
+        normalized = env_value.strip().lower()
+        if normalized in ("true", "1", "yes", "on", "enabled"):
+            return True
+        elif normalized in ("false", "0", "no", "off", "disabled"):
+            return False
+        else:
+            self.logger.warning(f"无效的 {env_key}: {env_value}，使用默认值 {default}")
+            return default
+
+    def load_performance_config(self) -> dict:
+        """
+        加载性能优化配置
+
+        Returns:
+            dict: 性能优化配置字典，包含以下键：
+                - shard_count: 分片数量
+                - batch_update_buffer_size: 批量更新缓冲区大小
+                - batch_update_interval: 批量更新刷新间隔（秒）
+                - enable_auto_cleanup: 是否启用自动清理
+                - enable_batch_updates: 是否启用批量更新
+                - enable_adaptive_scaling: 是否启用自适应扩展
+        """
+        # 加载分片数量配置
+        shard_count = self.load_int_config(
+            "SHARD_COUNT",
+            self.DEFAULT_SHARD_COUNT,
+            "SHARD_COUNT",
+            1,  # 最小值
+            self.MAX_SHARD_COUNT,  # 最大值
+        )
+
+        # 加载批量更新缓冲区大小
+        batch_update_buffer_size = self.load_int_config(
+            "BATCH_UPDATE_BUFFER_SIZE",
+            self.DEFAULT_BATCH_UPDATE_BUFFER_SIZE,
+            "BATCH_UPDATE_BUFFER_SIZE",
+            1,
+            self.MAX_BATCH_UPDATE_BUFFER_SIZE,
+        )
+
+        # 加载批量更新刷新间隔
+        batch_update_interval = self._load_float_config(
+            "BATCH_UPDATE_INTERVAL",
+            self.DEFAULT_BATCH_UPDATE_INTERVAL,
+            "BATCH_UPDATE_INTERVAL",
+            0.01,  # 最小值 10ms
+            self.MAX_BATCH_UPDATE_INTERVAL,
+        )
+
+        # 加载布尔配置（使用改进的解析方法）
+        enable_auto_cleanup = self._load_bool_config(
+            "ENABLE_AUTO_CLEANUP", self.DEFAULT_ENABLE_AUTO_CLEANUP
+        )
+        enable_batch_updates = self._load_bool_config(
+            "ENABLE_BATCH_UPDATES", self.DEFAULT_ENABLE_BATCH_UPDATES
+        )
+        enable_adaptive_scaling = self._load_bool_config(
+            "ENABLE_ADAPTIVE_SCALING", self.DEFAULT_ENABLE_ADAPTIVE_SCALING
+        )
+
+        return {
+            "shard_count": shard_count,
+            "batch_update_buffer_size": batch_update_buffer_size,
+            "batch_update_interval": batch_update_interval,
+            "enable_auto_cleanup": enable_auto_cleanup,
+            "enable_batch_updates": enable_batch_updates,
+            "enable_adaptive_scaling": enable_adaptive_scaling,
+        }

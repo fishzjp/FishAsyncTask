@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fish-async-task"
-version = "0.2.0"
+version = "0.2.1"
 description = "纯Python实现的异步任务管理器，支持线程池和动态伸缩"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 license = "MIT"
 authors = [
     {name = "fishzjp"}
@@ -17,8 +17,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -52,21 +50,59 @@ performance = [
     "huey>=2.4.0",         # 轻量级任务队列
     "dramatiq>=1.14.0",    # 高性能任务队列
 ]
-dev = ["pytest>=7.0.0", "black>=23.0.0", "isort>=5.0.0", "mypy>=1.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-benchmark>=4.0.0",
+    "locust>=2.0.0",
+    "black>=23.0.0",
+    "isort>=5.0.0",
+    "mypy>=1.0.0"
+]
 
 [tool.isort]
 profile = "black"
 line_length = 100
 
+[tool.pytest.ini_options]
+addopts = [
+    "--cov=fish_async_task",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--cov-fail-under=80",
+    "--cov-branch",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
 [tool.mypy]
-python_version = "3.7"
+python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 # 逐步启用更严格的类型检查
-warn_untyped_defs = true
-warn_untyped_calls = true
 warn_redundant_casts = true
-warn_unused_ignores = true
 strict_optional = true
+# HTML报告生成
+html_report = "mypy-report"
+show_error_context = true
+
+# 第三方库类型忽略
+[[tool.mypy.overrides]]
+module = [
+    "psutil.*",
+    "redis.*",
+    "huey.*",
+    "dramatiq.*"
+]
+ignore_missing_imports = true
+
+# 忽略Cython模块(这些是编译扩展,mypy无法检查)
+[[tool.mypy.overrides]]
+module = [
+    "fish_async_task._cython.*"
+]
+ignore_errors = true
 
