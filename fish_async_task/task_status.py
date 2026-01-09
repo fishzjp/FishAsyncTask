@@ -300,7 +300,11 @@ class ShardedTaskStatusWithExpiry:
                 # 使用负无穷确保没有时间戳的任务排在最后
                 submit_time: Optional[float] = status.get("submit_time")
                 start_time: Optional[float] = status.get("start_time")
-                sort_key = submit_time if submit_time is not None else (start_time if start_time is not None else float("-inf"))
+                sort_key = (
+                    submit_time
+                    if submit_time is not None
+                    else (start_time if start_time is not None else float("-inf"))
+                )
                 all_tasks.append((sort_key, task_id, shard_idx, status))
 
         # 按时间排序（降序，最新的在前）
