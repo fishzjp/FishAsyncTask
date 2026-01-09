@@ -4,10 +4,10 @@
 提供性能测量、统计分析和报告生成工具。
 """
 
-import time
 import statistics
 import threading
-from concurrent.futures import ThreadPoolExecutor, Future
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 

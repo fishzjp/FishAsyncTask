@@ -8,8 +8,9 @@
 """
 
 import time
-import pytest
 from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 from fish_async_task.task_manager import TaskManager as TaskManagerClass
 

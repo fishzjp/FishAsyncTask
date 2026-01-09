@@ -30,6 +30,10 @@ ENV/
 .vscode/
 .idea/
 .cursor/
+.specify/
+.claude/
+specs/
+claude.md
 *.swp
 *.swo
 *~
@@ -38,6 +42,8 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+scripts/
+.benchmarks/
 .tox/
 
 # Distribution

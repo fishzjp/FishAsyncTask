@@ -5,16 +5,16 @@
 支持自适应线程管理，根据CPU使用率和队列积压动态调整线程数量。
 """
 
+import logging
 import os
-import threading
 import queue
+import threading
 import time
 import uuid
-import logging
 from collections import deque
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
-from .types import TaskTuple, TaskStatus
+from .types import TaskStatus, TaskTuple
 
 
 class AdaptiveWorkerManager:
@@ -76,7 +76,7 @@ class AdaptiveWorkerManager:
         self._last_scale_down = 0.0
 
         # 任务执行时间统计（最近100个任务）
-        self._task_times: deque = deque(maxlen=100)
+        self._task_times: Deque[float] = deque(maxlen=100)
 
         # CPU监控器（可选）
         self._cpu_monitor: Optional["CPUMonitor"] = None
@@ -255,6 +255,7 @@ class CPUMonitor:
         """
         try:
             import psutil  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -275,10 +276,10 @@ class CPUMonitor:
             import psutil
 
             # 采样多次计算平均CPU使用率
-            cpu_percentages = []
+            cpu_percentages: List[float] = []
             for _ in range(self.sample_count):
                 cpu_percent = psutil.cpu_percent(interval=self.sample_interval)
-                cpu_percentages.append(cpu_percent)
+                cpu_percentages.append(float(cpu_percent))
 
             # 返回平均CPU使用率
             avg_cpu = sum(cpu_percentages) / len(cpu_percentages)
@@ -301,6 +302,7 @@ class CPUMonitor:
 
         try:
             import psutil
+
             count = psutil.cpu_count()
             return count if count is not None else 1
         except Exception:
@@ -331,6 +333,9 @@ class WorkerManager:
     DEFAULT_QUEUE_THRESHOLD_LOW = 10  # 默认缩容队列阈值
     DEFAULT_SCALE_UP_COOLDOWN = 5.0  # 默认扩容冷却期
     DEFAULT_SCALE_DOWN_COOLDOWN = 30.0  # 默认缩容冷却期
+
+    # 实例属性类型声明
+    _adaptive_manager: Optional["AdaptiveWorkerManager"]
 
     def __init__(
         self,
@@ -421,9 +426,7 @@ class WorkerManager:
         # 空闲时间跟踪
         self._idle_start_time: Optional[float] = None
 
-    def _load_config_float(
-        self, env_key: str, value: Optional[float], default: float
-    ) -> float:
+    def _load_config_float(self, env_key: str, value: Optional[float], default: float) -> float:
         """加载浮点配置"""
         if value is not None:
             return value
@@ -435,9 +438,7 @@ class WorkerManager:
                 self.logger.warning(f"无效的 {env_key}: {env_value}，使用默认值 {default}")
         return default
 
-    def _load_config_int(
-        self, env_key: str, value: Optional[int], default: int
-    ) -> int:
+    def _load_config_int(self, env_key: str, value: Optional[int], default: int) -> int:
         """加载整数配置"""
         if value is not None:
             return value
@@ -448,11 +449,11 @@ class WorkerManager:
             except ValueError:
                 self.logger.warning(f"无效的 {env_key}: {env_value}，使用默认值 {default}")
         return default
-    
+
     def start_initial_workers(self) -> None:
         """
         启动初始工作线程
-        
+
         根据 min_workers 配置启动最小数量的工作线程。
         这些线程会持续运行，不会被空闲超时机制回收。
         """
@@ -465,7 +466,7 @@ class WorkerManager:
             thread.start()
             self.worker_threads.append(thread)
         self.logger.info(f"启动初始工作线程数: {len(self.worker_threads)}")
-    
+
     def scale_up_workers_if_needed(self) -> None:
         """
         根据队列大小和CPU使用率动态扩展工作线程
@@ -484,17 +485,19 @@ class WorkerManager:
             if self._adaptive_manager is not None:
                 # 使用自适应策略判断
                 cpu_usage = self._adaptive_manager.get_cpu_usage()
-                if self._adaptive_manager.should_scale_up(current_thread_count, queue_size, cpu_usage):
+                if self._adaptive_manager.should_scale_up(
+                    current_thread_count, queue_size, cpu_usage
+                ):
                     self._create_and_start_worker()
             else:
                 # 原始策略：队列积压超过当前线程数时扩容
                 if queue_size > current_thread_count:
                     self._create_and_start_worker()
-    
+
     def _create_and_start_worker(self) -> None:
         """
         创建并启动新的工作线程
-        
+
         注意：此方法应在 threads_lock 保护下调用，或确保调用者已持有锁。
         """
         thread = threading.Thread(
@@ -504,8 +507,8 @@ class WorkerManager:
         )
         thread.start()
         self.worker_threads.append(thread)
-        self.logger.info(f"启动新工作线程，当前线程数: {len(self.worker_threads)}")
-    
+        self.logger.info("启动新工作线程，当前线程数: %d", len(self.worker_threads))
+
     def record_task_time(self, task_time: float) -> None:
         """
         记录任务执行时间（用于自适应管理）
@@ -542,9 +545,7 @@ class WorkerManager:
             queue_size = self.task_queue.qsize()
             idle_time = self.get_idle_time()
 
-            return self._adaptive_manager.should_scale_down(
-                current_workers, queue_size, idle_time
-            )
+            return self._adaptive_manager.should_scale_down(current_workers, queue_size, idle_time)
 
     def get_adaptive_stats(self) -> Optional[Dict[str, Any]]:
         """
@@ -580,7 +581,9 @@ class WorkerManager:
                 current_workers = len(self.worker_threads)
                 queue_size = self.task_queue.qsize()
 
-                if self._adaptive_manager.should_scale_down(current_workers, queue_size, idle_duration):
+                if self._adaptive_manager.should_scale_down(
+                    current_workers, queue_size, idle_duration
+                ):
                     # 执行缩容
                     current_thread = threading.current_thread()
                     if len(self.worker_threads) > self.min_workers:
@@ -611,7 +614,7 @@ class WorkerManager:
                         self.logger.debug(f"线程 {thread_name} 已被移除，退出")
                         return True
         return False
-    
+
     def _worker_loop(self) -> None:
         """
         工作线程主循环
@@ -621,7 +624,7 @@ class WorkerManager:
         同时记录任务执行时间用于自适应管理。
         """
         thread_name = threading.current_thread().name
-        self.logger.debug(f"工作线程启动: {thread_name}")
+        self.logger.debug("工作线程启动: %s", thread_name)
         idle_start: Optional[float] = None
 
         while self._running_event.is_set():
@@ -654,7 +657,7 @@ class WorkerManager:
                 elif self._check_idle_timeout(thread_name, idle_start):
                     break
                 continue
-                
+
             except KeyboardInterrupt:
                 # 键盘中断，正常退出
                 self.logger.info(f"工作线程收到中断信号: {thread_name}")
@@ -674,43 +677,64 @@ class WorkerManager:
             except (MemoryError, ResourceWarning) as e:
                 # 资源相关异常，记录错误但尝试继续运行
                 self.logger.error(f"工作线程遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True)
+            except (TimeoutError, RuntimeError) as e:
+                # 超时和运行时错误，记录错误但继续运行
+                self.logger.error(
+                    f"工作线程遇到运行时异常 [{type(e).__name__}]: {e}", exc_info=True
+                )
             except Exception as e:
                 # 记录未预期的异常，但不中断线程运行
                 # 这确保了单个任务的异常不会影响整个线程池的运行
                 error_type = type(e).__name__
-                self.logger.error(
-                    f"工作线程执行异常 [{error_type}]: {e}", exc_info=True
-                )
-        
-        self.logger.debug(f"工作线程退出: {thread_name}")
-    
+                # 注意：这里捕获所有异常是为了保持线程池运行
+                # 如果是编程错误（TypeError、AttributeError等），应该修复而不是掩盖
+                if error_type in (
+                    "TypeError",
+                    "AttributeError",
+                    "ValueError",
+                    "KeyError",
+                    "IndexError",
+                ):
+                    # 编程错误应该向上传播，以便开发时发现
+                    self.logger.critical(
+                        f"工作线程遇到编程错误 [{error_type}]: {e}，建议修复代码", exc_info=True
+                    )
+                    # 重新抛出编程错误，以便快速失败
+                    raise
+                else:
+                    self.logger.error(f"工作线程执行未预期异常 [{error_type}]: {e}", exc_info=True)
+
+        self.logger.debug("工作线程退出: %s", thread_name)
+
     def send_shutdown_signals(self) -> None:
         """
         向所有工作线程发送退出信号
-        
+
         通过向任务队列中放入 None 值来通知工作线程退出。
         如果队列已满，会尝试等待并重试。
         """
         with self.threads_lock:
             thread_count = len(self.worker_threads)
-        
-        # 尝试发送退出信号，如果队列满则等待
+
+        # 尝试发送退出信号,如果队列满则等待
         signals_sent = 0
         for _ in range(thread_count):
             try:
-                self.task_queue.put_nowait(None)
+                # type: ignore[arg-type]  # None是特殊的退出信号
+                self.task_queue.put_nowait(None)  # type: ignore[arg-type]
                 signals_sent += 1
             except queue.Full:
-                # 队列已满，尝试等待并重试
+                # 队列已满,尝试等待并重试
                 try:
-                    self.task_queue.put(None, timeout=self.QUEUE_PUT_TIMEOUT)
+                    # type: ignore[arg-type]  # None是特殊的退出信号
+                    self.task_queue.put(None, timeout=self.QUEUE_PUT_TIMEOUT)  # type: ignore[arg-type]
                     signals_sent += 1
                 except queue.Full:
                     self.logger.warning(
                         f"无法发送退出信号给所有线程，已发送: {signals_sent}/{thread_count}"
                     )
                     break
-        
+
         if signals_sent < thread_count:
             self.logger.warning(
                 f"只发送了 {signals_sent}/{thread_count} 个退出信号，"
@@ -718,21 +742,21 @@ class WorkerManager:
             )
         else:
             self.logger.info(f"成功发送 {signals_sent} 个退出信号给工作线程")
-    
+
     def wait_for_threads_exit(self, join_timeout: int) -> None:
         """
         等待所有工作线程退出
-        
+
         在锁内创建线程副本以避免竞态条件，然后逐个等待线程退出。
         如果线程在超时时间内未退出，会记录警告但继续执行。
-        
+
         Args:
             join_timeout: 线程join超时时间（秒）
         """
         # 在锁内创建线程副本，避免竞态条件
         with self.threads_lock:
             threads_to_wait = list(self.worker_threads)
-        
+
         for thread in threads_to_wait:
             if thread.is_alive():
                 try:
@@ -747,9 +771,7 @@ class WorkerManager:
                 except Exception as e:
                     # 其他未预期的异常
                     error_type = type(e).__name__
-                    self.logger.warning(
-                        f"线程 {thread.name} join 失败 [{error_type}]: {e}"
-                    )
+                    self.logger.warning(f"线程 {thread.name} join 失败 [{error_type}]: {e}")
 
 
 class TaskExecutor:
@@ -798,7 +820,9 @@ class TaskExecutor:
 
         # 批量状态更新配置
         self._batch_size = batch_size if batch_size is not None else self.BATCH_SIZE
-        self._batch_flush_interval = batch_flush_interval if batch_flush_interval is not None else self.BATCH_FLUSH_INTERVAL
+        self._batch_flush_interval = (
+            batch_flush_interval if batch_flush_interval is not None else self.BATCH_FLUSH_INTERVAL
+        )
 
         # 批量状态更新队列
         self._batch_updates: deque = deque()
@@ -842,7 +866,10 @@ class TaskExecutor:
             time_since_last_flush = current_time - self._last_batch_flush
 
             # 如果批量大小达到阈值或超过刷新间隔，立即刷新
-            if len(self._batch_updates) >= self._batch_size or time_since_last_flush >= self._batch_flush_interval:
+            if (
+                len(self._batch_updates) >= self._batch_size
+                or time_since_last_flush >= self._batch_flush_interval
+            ):
                 self._last_batch_flush = current_time
                 self._flush_batch_updates()
 
@@ -861,14 +888,16 @@ class TaskExecutor:
             for task_id, status, start_time, end_time, result, error in batch_data:
                 try:
                     self._update_status(
-                        task_id, status,
-                        start_time=start_time, end_time=end_time,
-                        result=result, error=error
+                        task_id,
+                        status,
+                        start_time=start_time,
+                        end_time=end_time,
+                        result=result,
+                        error=error,
                     )
                 except Exception as e:
                     self.logger.error(
-                        f"批量更新任务状态失败 [{type(e).__name__}]: {e}",
-                        exc_info=True
+                        f"批量更新任务状态失败 [{type(e).__name__}]: {e}", exc_info=True
                     )
         except Exception:
             # 如果执行更新出错，重新将数据放回队列
@@ -907,7 +936,7 @@ class TaskExecutor:
         """
         with self._batch_lock:
             return len(self._batch_updates)
-    
+
     def execute_task(self, task: TaskTuple) -> None:
         """
         执行任务
@@ -921,7 +950,7 @@ class TaskExecutor:
         try:
             # 更新任务状态为running（使用批量队列）
             self._queue_status_update(task_id, "running", start_time=start_time)
-            self.logger.debug(f"任务 {task_id} 开始执行")
+            self.logger.debug("任务 %s 开始执行", task_id)
 
             # 执行任务（支持超时）
             result = self._execute_with_timeout(task_id, func, args, kwargs)
@@ -931,9 +960,7 @@ class TaskExecutor:
             self._queue_status_update(
                 task_id, "completed", start_time=start_time, end_time=end_time, result=result
             )
-            self.logger.debug(
-                f"任务 {task_id} 执行完成，耗时 {end_time - start_time:.2f}秒"
-            )
+            self.logger.debug("任务 %s 执行完成，耗时 %.2f秒", task_id, end_time - start_time)
 
         except KeyboardInterrupt:
             # 键盘中断，标记为失败
@@ -966,7 +993,9 @@ class TaskExecutor:
             self._queue_status_update(
                 task_id, "failed", start_time=start_time, end_time=end_time, error=str(e)
             )
-            self.logger.error(f"任务 {task_id} 遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True)
+            self.logger.error(
+                f"任务 {task_id} 遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True
+            )
         except Exception as e:
             # 记录任务执行异常
             end_time = time.time()
@@ -978,7 +1007,7 @@ class TaskExecutor:
         finally:
             # 尝试刷新批量更新（基于时间间隔）
             self._check_and_flush_batch()
-    
+
     def _execute_with_timeout(
         self,
         task_id: str,
@@ -988,30 +1017,30 @@ class TaskExecutor:
     ) -> Any:
         """
         执行任务，支持超时控制
-        
+
         Args:
             task_id: 任务ID
             func: 要执行的任务函数
             args: 任务函数的 positional 参数
             kwargs: 任务函数的关键字参数
-            
+
         Returns:
             Any: 任务执行结果
-            
+
         Raises:
             TimeoutError: 任务执行超时
             Exception: 任务执行过程中的异常
-            
+
         Note:
             Python的线程无法被强制终止，超时后任务线程仍会继续运行。
             这是Python GIL的限制，超时只是停止等待结果，但任务本身可能仍在执行。
             如果需要真正的任务取消，考虑使用进程池或支持取消的第三方库。
-            
+
         Warning:
             当任务超时时，虽然会抛出TimeoutError，但任务线程仍在后台运行。
             这可能导致资源泄漏（文件句柄、网络连接等）。建议任务函数内部
             实现超时检查机制，或使用支持取消的异步框架。
-            
+
         资源泄漏预防建议：
         1. 在任务函数中使用上下文管理器（with语句）管理资源
         2. 在任务函数中定期检查超时标志
@@ -1054,7 +1083,8 @@ class TaskExecutor:
             with self._timed_out_tasks_lock:
                 # 清理过期的超时任务记录
                 expired_tasks = [
-                    tid for tid, expiry in self._timed_out_tasks.items()
+                    tid
+                    for tid, expiry in self._timed_out_tasks.items()
                     if current_time - expiry > self.TIMEOUT_TASK_EXPIRY
                 ]
                 for tid in expired_tasks:
@@ -1097,10 +1127,7 @@ class TaskExecutor:
             try:
                 callback(task_id)
             except Exception as e:
-                self.logger.error(
-                    f"清理回调执行失败 [{type(e).__name__}]: {e}",
-                    exc_info=True
-                )
+                self.logger.error(f"清理回调执行失败 [{type(e).__name__}]: {e}", exc_info=True)
 
     def cleanup_timed_out_tasks(self, max_cleanup: int = 100) -> int:
         """
@@ -1120,7 +1147,8 @@ class TaskExecutor:
 
         with self._timed_out_tasks_lock:
             expired_tasks = [
-                (tid, expiry) for tid, expiry in self._timed_out_tasks.items()
+                (tid, expiry)
+                for tid, expiry in self._timed_out_tasks.items()
                 if current_time - expiry > self.TIMEOUT_TASK_EXPIRY
             ]
 
@@ -1143,4 +1171,3 @@ class TaskExecutor:
         """
         with self._timed_out_tasks_lock:
             return len(self._timed_out_tasks)
-

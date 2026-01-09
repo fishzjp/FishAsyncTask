@@ -137,20 +137,20 @@ class ReadWriteLockContext:
 class ShardedTaskStatusWithExpiry:
     """
     分片任务状态存储（带过期时间管理）
-    
+
     使用分片锁减少锁竞争，每个分片内部使用优先级队列管理过期时间。
     支持高并发查询和更新，以及高效的增量清理。
-    
+
     线程安全说明：
     - 每个分片有独立的锁，不同分片的操作可以并发执行
     - 同一分片内的操作串行化，保证线程安全
     - 清理操作支持增量清理，避免长时间阻塞
     """
-    
+
     def __init__(self, shard_count: int, ttl: int):
         """
         初始化分片状态存储
-        
+
         Args:
             shard_count: 分片数量，建议为2的幂次（8, 16, 32, 64）
             ttl: 任务状态TTL（秒）
@@ -163,34 +163,34 @@ class ShardedTaskStatusWithExpiry:
         self.rw_locks: List[ReadWriteLock] = [ReadWriteLock() for _ in range(shard_count)]
         # 每个分片的过期时间堆：(expiry_time, task_id)
         self.expiry_heaps: List[List[Tuple[float, str]]] = [[] for _ in range(shard_count)]
-    
+
     def _get_shard_index(self, task_id: str) -> int:
         """
         根据 task_id 计算分片索引
-        
+
         Args:
             task_id: 任务ID
-            
+
         Returns:
             int: 分片索引（0 到 shard_count-1）
         """
         # 使用稳定的哈希函数
         return hash(task_id) % self.shard_count
-    
+
     def get_status(self, task_id: str) -> Optional[TaskStatusDict]:
         """
         获取任务状态（线程安全）
-        
+
         Args:
             task_id: 任务ID
-            
+
         Returns:
             Optional[TaskStatusDict]: 任务状态字典，如果任务不存在则返回None
         """
         shard_idx = self._get_shard_index(task_id)
         with ReadWriteLockContext(self.rw_locks[shard_idx], write=False):
             return self.shards[shard_idx].get(task_id)
-    
+
     def update_status(
         self,
         task_id: str,
@@ -199,7 +199,7 @@ class ShardedTaskStatusWithExpiry:
     ) -> None:
         """
         更新任务状态（线程安全）
-        
+
         Args:
             task_id: 任务ID
             status: 新的任务状态字典
@@ -216,11 +216,11 @@ class ShardedTaskStatusWithExpiry:
                 if end_time:
                     expiry_time = end_time + self.ttl
                     heapq.heappush(self.expiry_heaps[shard_idx], (expiry_time, task_id))
-    
+
     def remove_status(self, task_id: str) -> None:
         """
         移除任务状态（线程安全）
-        
+
         Args:
             task_id: 任务ID
         """
@@ -228,23 +228,23 @@ class ShardedTaskStatusWithExpiry:
         with ReadWriteLockContext(self.rw_locks[shard_idx], write=True):
             self.shards[shard_idx].pop(task_id, None)
             # 注意：堆中的条目会在清理时自动处理，不需要立即移除
-    
+
     def cleanup_expired(self, max_cleanup: Optional[int] = None) -> int:
         """
         清理过期任务（增量清理）
-        
+
         遍历所有分片，清理过期任务。支持增量清理，避免长时间阻塞。
-        
+
         Args:
             max_cleanup: 最大清理数量，None表示清理所有过期任务
-            
+
         Returns:
             int: 清理的任务数量
         """
         now = time.time()
         cleaned_count = 0
         remaining_cleanup = max_cleanup
-        
+
         # 遍历所有分片
         for shard_idx in range(self.shard_count):
             if remaining_cleanup is not None and remaining_cleanup <= 0:
@@ -280,45 +280,49 @@ class ShardedTaskStatusWithExpiry:
                                 remaining_cleanup -= 1
 
         return cleaned_count
-    
+
     def _collect_all_tasks(self) -> List[Tuple[float, str, int, TaskStatusDict]]:
         """
         收集所有任务并按时间排序
-        
+
         注意：调用此方法前必须已持有所有锁。
-        
+
         Returns:
             List[Tuple[float, str, int, TaskStatusDict]]: 排序后的任务列表
                 (sort_key, task_id, shard_idx, status)
         """
         all_tasks: List[Tuple[float, str, int, TaskStatusDict]] = []
-        
+
         # 收集所有任务（此时已持有所有锁，数据一致）
         for shard_idx, shard_dict in enumerate(self.shards):
             for task_id, status in shard_dict.items():
                 # 排序键：优先使用 submit_time，其次使用 start_time，都不存在则使用负无穷
                 # 使用负无穷确保没有时间戳的任务排在最后
-                sort_key = status.get("submit_time", status.get("start_time", float("-inf")))
+                submit_time: Optional[float] = status.get("submit_time")
+                start_time: Optional[float] = status.get("start_time")
+                sort_key = submit_time if submit_time is not None else (start_time if start_time is not None else float("-inf"))
                 all_tasks.append((sort_key, task_id, shard_idx, status))
-        
+
         # 按时间排序（降序，最新的在前）
         all_tasks.sort(key=lambda x: x[0], reverse=True)
         return all_tasks
-    
+
     def _cleanup_old_tasks(
-        self, all_tasks: List[Tuple[float, str, int, TaskStatusDict]], 
-        tasks_to_keep: set, max_count: int
+        self,
+        all_tasks: List[Tuple[float, str, int, TaskStatusDict]],
+        tasks_to_keep: set,
+        max_count: int,
     ) -> int:
         """
         清理旧任务
-        
+
         注意：调用此方法前必须已持有所有锁。
-        
+
         Args:
             all_tasks: 所有任务列表
             tasks_to_keep: 需要保留的任务ID集合
             max_count: 最大任务数量
-            
+
         Returns:
             int: 清理的任务数量
         """
@@ -328,13 +332,13 @@ class ShardedTaskStatusWithExpiry:
             self.shards[shard_idx].pop(task_id, None)
             cleaned_count += 1
         return cleaned_count
-    
+
     def _rebuild_expiry_heaps(self, tasks_to_keep: set) -> None:
         """
         重建过期时间堆，只保留需要保留的任务
-        
+
         注意：调用此方法前必须已持有所有锁。
-        
+
         Args:
             tasks_to_keep: 需要保留的任务ID集合
         """
@@ -345,7 +349,7 @@ class ShardedTaskStatusWithExpiry:
                 if tid in tasks_to_keep
             ]
             heapq.heapify(self.expiry_heaps[shard_idx])
-    
+
     def enforce_max_count(self, max_count: int) -> int:
         """
         强制执行最大任务数量限制
@@ -395,10 +399,18 @@ class ShardedTaskStatusWithExpiry:
             for rw_lock in reversed(acquired_locks):
                 try:
                     rw_lock.release_write()
-                except Exception:
-                    # 锁可能已被释放，忽略异常
-                    pass
-    
+                except RuntimeError as e:
+                    # RuntimeError: 释放未持有的锁或重复释放
+                    # 记录警告但不中断其他锁的释放
+                    logging.getLogger(__name__).warning(
+                        f"释放锁时遇到 RuntimeError: {e}，可能锁状态不一致"
+                    )
+                except Exception as e:
+                    # 其他未预期的异常，记录错误
+                    logging.getLogger(__name__).error(
+                        f"释放锁时遇到未预期异常 [{type(e).__name__}]: {e}", exc_info=True
+                    )
+
     def get_all_statuses(self) -> Dict[str, TaskStatusDict]:
         """
         获取所有任务状态（需要获取所有锁）
@@ -418,15 +430,19 @@ class ShardedTaskStatusWithExpiry:
             for shard in self.shards:
                 result.update(shard)
         finally:
-            # 逆序释放所有已获取的读锁
+            # 逆序释放所有已获取的锁
             for rw_lock in reversed(acquired_locks):
                 try:
                     rw_lock.release_read()
-                except Exception:
-                    pass
+                except RuntimeError as e:
+                    logging.getLogger(__name__).warning(f"释放读锁时遇到 RuntimeError: {e}")
+                except Exception as e:
+                    logging.getLogger(__name__).error(
+                        f"释放读锁时遇到未预期异常 [{type(e).__name__}]: {e}", exc_info=True
+                    )
 
         return result
-    
+
     def clear_all(self) -> None:
         """
         清空所有任务状态
@@ -448,9 +464,13 @@ class ShardedTaskStatusWithExpiry:
             for rw_lock in reversed(acquired_locks):
                 try:
                     rw_lock.release_write()
-                except Exception:
-                    pass
-    
+                except RuntimeError as e:
+                    logging.getLogger(__name__).warning(f"释放写锁时遇到 RuntimeError: {e}")
+                except Exception as e:
+                    logging.getLogger(__name__).error(
+                        f"释放写锁时遇到未预期异常 [{type(e).__name__}]: {e}", exc_info=True
+                    )
+
     def get_total_count(self) -> int:
         """
         获取总任务数量（不需要锁，仅用于统计）
@@ -671,8 +691,7 @@ class BatchedStatusUpdater:
                 except Exception as e:
                     # 记录错误但不影响其他更新
                     logging.getLogger(__name__).error(
-                        f"批量更新任务状态失败 [{type(e).__name__}]: {e}",
-                        exc_info=True
+                        f"批量更新任务状态失败 [{type(e).__name__}]: {e}", exc_info=True
                     )
         except Exception:
             # 如果执行更新出错，重新将数据放回队列
@@ -793,7 +812,11 @@ class TaskStatusManager:
 
         # 批量更新配置
         self._batch_size = batch_size if batch_size is not None else self.DEFAULT_BATCH_SIZE
-        self._batch_flush_interval = batch_flush_interval if batch_flush_interval is not None else self.DEFAULT_BATCH_FLUSH_INTERVAL
+        self._batch_flush_interval = (
+            batch_flush_interval
+            if batch_flush_interval is not None
+            else self.DEFAULT_BATCH_FLUSH_INTERVAL
+        )
 
         # 初始化批量更新器
         self._batch_updater: Optional[BatchedStatusUpdater] = None
@@ -855,7 +878,7 @@ class TaskStatusManager:
 
         # 更新分片存储
         self.sharded_status.update_status(task_id, new_status, current_status)
-    
+
     def _merge_task_status(
         self,
         current_status: TaskStatusDict,
@@ -868,7 +891,7 @@ class TaskStatusManager:
     ) -> TaskStatusDict:
         """
         合并任务状态字段
-        
+
         Args:
             current_status: 当前任务状态
             status: 新的任务状态
@@ -877,18 +900,18 @@ class TaskStatusManager:
             result: 任务执行结果（可选）
             error: 错误信息（可选）
             submit_time: 任务提交时间（可选）
-            
+
         Returns:
             TaskStatusDict: 合并后的任务状态字典
         """
         new_status: TaskStatusDict = {"status": status}
-        
+
         # 保留或设置时间字段
         if submit_time is not None:
             new_status["submit_time"] = submit_time
         elif "submit_time" in current_status:
             new_status["submit_time"] = current_status["submit_time"]
-        
+
         # start_time 处理逻辑：
         # 1. 如果提供了新的 start_time，使用新的
         # 2. 如果没有提供但已存在 start_time，保留旧的
@@ -897,24 +920,24 @@ class TaskStatusManager:
             new_status["start_time"] = start_time
         elif "start_time" in current_status:
             new_status["start_time"] = current_status["start_time"]
-        
+
         if end_time is not None:
             new_status["end_time"] = end_time
         elif "end_time" in current_status:
             new_status["end_time"] = current_status["end_time"]
-        
+
         if result is not None:
             new_status["result"] = result
         elif "result" in current_status:
             new_status["result"] = current_status["result"]
-        
+
         if error is not None:
             new_status["error"] = error
         elif "error" in current_status:
             new_status["error"] = current_status["error"]
-        
+
         return new_status
-    
+
     def update_task_status(
         self,
         task_id: str,
@@ -943,34 +966,42 @@ class TaskStatusManager:
         if self._use_batch_update and self._batch_updater is not None:
             # 使用批量更新
             self._batch_updater.update(
-                task_id, status,
-                start_time=start_time, end_time=end_time,
-                result=result, error=error, submit_time=submit_time
+                task_id,
+                status,
+                start_time=start_time,
+                end_time=end_time,
+                result=result,
+                error=error,
+                submit_time=submit_time,
             )
         else:
             # 直接更新
             self._do_update_task_status(
-                task_id, status,
-                start_time=start_time, end_time=end_time,
-                result=result, error=error, submit_time=submit_time
+                task_id,
+                status,
+                start_time=start_time,
+                end_time=end_time,
+                result=result,
+                error=error,
+                submit_time=submit_time,
             )
-    
+
     def get_task_status(self, task_id: str) -> Optional[TaskStatusDict]:
         """
         获取任务状态
-        
+
         Args:
             task_id: 任务ID
-            
+
         Returns:
             Optional[TaskStatusDict]: 任务状态字典，如果任务不存在则返回None
         """
         return self.sharded_status.get_status(task_id)
-    
+
     def clear_task_status(self, task_id: Optional[str] = None) -> None:
         """
         清除指定任务状态或所有任务状态
-        
+
         Args:
             task_id: 要清除的任务ID。如果为None，则清除所有任务状态。
         """
@@ -981,33 +1012,32 @@ class TaskStatusManager:
             count = self.sharded_status.get_total_count()
             self.sharded_status.clear_all()
             self.logger.info(f"已清除所有任务状态记录（共 {count} 条）")
-    
+
     def cleanup_old_task_status(self) -> int:
         """
         清理过期的任务状态（增量清理）
-        
+
         清理策略：
         1. 清理已完成或失败且超过TTL的任务（增量清理，每次最多100个）
         2. 如果任务状态数量超过限制，清理最旧的任务
-        
+
         Returns:
             int: 清理的任务数量
         """
         cleaned_count = 0
-        
+
         # 增量清理过期任务（每次最多清理100个，避免长时间阻塞）
         cleaned_count += self.sharded_status.cleanup_expired(
             max_cleanup=self.DEFAULT_MAX_CLEANUP_PER_BATCH
         )
-        
+
         # 强制执行最大数量限制
         cleaned_count += self.sharded_status.enforce_max_count(self.max_task_status_count)
-        
+
         if cleaned_count > 0:
             current_count = self.sharded_status.get_total_count()
             self.logger.info(
-                f"清理了 {cleaned_count} 个过期任务状态，"
-                f"当前任务状态数: {current_count}"
+                f"清理了 {cleaned_count} 个过期任务状态，" f"当前任务状态数: {current_count}"
             )
 
         return cleaned_count
@@ -1075,5 +1105,3 @@ class TaskStatusManager:
         if self._batch_updater is not None:
             return self._batch_updater.get_pending_count()
         return 0
-    
-

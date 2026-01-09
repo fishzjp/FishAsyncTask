@@ -5,18 +5,19 @@
 """
 
 import time
-import pytest
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
+import pytest
+
 from tests.performance.conftest import (
     TestConfig,
-    wait_for_task_completion,
-    wait_for_all_tasks,
-    create_test_tasks,
     cleanup_task_manager_instances,
-    print_test_header,
+    create_test_tasks,
     print_test_footer,
+    print_test_header,
+    wait_for_all_tasks,
+    wait_for_task_completion,
 )
 from tests.performance.utils import (
     PerformanceMetrics,
