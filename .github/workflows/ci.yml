@@ -31,8 +31,10 @@ jobs:
     - name: Cache uv dependencies
       uses: actions/cache@v4
       with:
-        path: ~/.cache/uv
-        key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+        path: |
+          ~/.cache/uv
+          .venv
+        key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml', 'uv.lock') }}
         restore-keys: |
           ${{ runner.os }}-uv-
 
