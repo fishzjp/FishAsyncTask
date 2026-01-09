@@ -14,6 +14,7 @@ import time
 import pytest
 
 from fish_async_task.performance import ShardedTaskStatus
+from fish_async_task.task_status import ShardedTaskStatusWithExpiry
 from fish_async_task.types import TaskStatus, TaskStatusDict
 
 
@@ -355,7 +356,7 @@ def test_get_all_status_basic():
         store.update_status(f"task-{i}", status)
 
     # 获取所有状态
-    all_status = store.get_all_status()
+    all_status = store.get_all_statuses()
     assert len(all_status) == 10
     assert all("task-" in key for key in all_status.keys())
 
@@ -363,7 +364,7 @@ def test_get_all_status_basic():
 def test_get_all_status_empty():
     """测试空状态存储的get_all_status"""
     store = ShardedTaskStatus(shard_count=4)
-    all_status = store.get_all_status()
+    all_status = store.get_all_statuses()
     assert len(all_status) == 0
 
 
@@ -372,7 +373,7 @@ def test_count_basic():
     store = ShardedTaskStatus(shard_count=4)
 
     # 初始计数为0
-    assert store.count() == 0
+    assert store.get_task_count() == 0
 
     # 添加任务
     for i in range(15):
@@ -383,7 +384,7 @@ def test_count_basic():
         store.update_status(f"task-{i}", status)
 
     # 计数应该是15
-    assert store.count() == 15
+    assert store.get_task_count() == 15
 
 
 def test_clear_basic():
@@ -398,13 +399,13 @@ def test_clear_basic():
         }
         store.update_status(f"task-{i}", status)
 
-    assert store.count() == 10
+    assert store.get_task_count() == 10
 
     # 清空
-    store.clear()
+    store.clear_all()
 
     # 验证已清空
-    assert store.count() == 0
+    assert store.get_task_count() == 0
     assert store.get_status("task-0") is None
 
 
@@ -422,7 +423,7 @@ def test_get_task_ids_basic():
         store.update_status(task_id, status)
 
     # 获取所有任务ID
-    retrieved_ids = store.get_task_ids()
+    retrieved_ids = list(store.get_all_statuses().keys())
     assert len(retrieved_ids) == 10
     assert set(retrieved_ids) == set(task_ids)
 
