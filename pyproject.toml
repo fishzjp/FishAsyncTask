@@ -77,7 +77,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 filterwarnings = [
-    "ignore::PytestReturnNotNoneWarning",
+    "ignore::pytest.PytestReturnNotNoneWarning",
 ]
 
 [tool.mypy]
