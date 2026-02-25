@@ -24,7 +24,7 @@ wheels/
 venv/
 env/
 ENV/
-.venv
+.venv/
 
 # IDE
 .vscode/
@@ -41,10 +41,18 @@ claude.md
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.json
+coverage.xml
 htmlcov/
-scripts/
 .benchmarks/
 .tox/
+tests/.pytest_cache/
+tests/pytest.log
+
+# Type checking
+.mypy_cache/
+mypy-report/
 
 # Distribution
 *.whl
@@ -53,4 +61,9 @@ scripts/
 .DS_Store
 Thumbs.db
 
+# Logs
+*.log
+
+# Reports
 docs/PERFORMANCE_COMPARISON_REPORT.md
+benchmark_report.json
