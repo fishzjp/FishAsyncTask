@@ -61,26 +61,12 @@ def main():
         if status and status["status"] == "completed":
             logger.info(f"任务 {task_id} 结果: {status.get('result')}")
 
-    # 示例2: 使用任务超时
-    logger.info("\n【示例2】使用任务超时")
+    # 清理已完成任务的状态
+    task_manager.clear_task_status()
+    logger.info("已清理所有任务状态")
 
-    def long_task(task_id: int):
-        logger.info(f"任务 {task_id} 开始执行")
-        time.sleep(3)
-        return f"任务 {task_id} 完成"
-
-    task_manager.submit_task(long_task, 1, block=False)
-    logger.info("已提交长时间任务")
-
-    time.sleep(0.5)
-    task_ids = task_manager.get_all_task_ids()
-    for task_id in task_ids:
-        status = task_manager.get_task_status(task_id)
-        if status:
-            logger.info(f"超时测试任务状态: {status['status']}")
-
-    # 示例3: 多实例管理
-    logger.info("\n【示例3】多实例管理")
+    # 示例2: 多实例管理
+    logger.info("\n【示例2】多实例管理")
 
     order_manager = TaskManager(instance_key="order")
     payment_manager = TaskManager(instance_key="payment")
@@ -92,18 +78,13 @@ def main():
     logger.info(f"支付实例任务 ID: {payment_task_id}")
 
     time.sleep(1)
-    logger.info(f"订单任务状态: {order_manager.get_task_status(order_task_id)['status']}")
-    logger.info(f"支付任务状态: {payment_manager.get_task_status(payment_task_id)['status']}")
+    order_status = order_manager.get_task_status(order_task_id)
+    payment_status = payment_manager.get_task_status(payment_task_id)
 
-    # 示例4: 获取所有任务ID
-    logger.info("\n【示例4】获取所有任务")
-    all_task_ids = task_manager.get_all_task_ids()
-    logger.info(f"当前任务数量: {len(all_task_ids)}")
-
-    # 清理单个任务状态
-    if all_task_ids:
-        task_manager.clear_task_status(all_task_ids[0])
-        logger.info(f"已清理任务 {all_task_ids[0]} 的状态")
+    if order_status:
+        logger.info(f"订单任务状态: {order_status['status']}")
+    if payment_status:
+        logger.info(f"支付任务状态: {payment_status['status']}")
 
     # 关闭所有实例
     logger.info("\n【关闭】关闭任务管理器")
