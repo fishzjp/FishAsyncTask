@@ -5,6 +5,112 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.2] - 2026-02-25 - 性能优化与功能增强版本
+
+### ✨ 新增功能
+
+#### 性能监控模块 (`fish_async_task.performance.monitoring`)
+- 新增 `PerformanceMetrics` 类 - 收集任务执行指标
+  - 支持任务提交、完成、失败、取消计数
+  - 支持平均执行时间、队列等待时间统计
+  - 支持百分位数统计 (P50, P90, P95, P99)
+  - 支持历史数据追踪 (可配置最大历史记录数)
+- 新增 `SystemHealthMonitor` 类 - 监控系统健康状态
+  - 支持队列大小、失败率、平均执行时间监控
+  - 支持自定义健康检查阈值
+  - 支持绿色/黄色/红色三级状态告警
+  - 自动记录告警日志
+
+#### 资源管理模块 (`fish_async_task.performance.resource_manager`)
+- 新增 `TaskResourceManager` 类 - 跟踪和管理任务资源
+  - 支持注册和注销任务资源
+  - 支持任务级资源批量清理
+  - 支持资源过期自动驱逐
+  - 防止长时间运行导致的资源泄漏
+- 新增 `TimeoutTaskTracker` 类 - 跟踪超时任务
+  - 支持超时任务自动跟踪
+  - 支持超时任务清理
+
+#### 优先级队列模块 (`fish_async_task.performance.priority_queue`)
+- 新增 `PriorityTaskQueue` 类 - 优先级任务队列
+  - 支持优先级排序（数字越小优先级越高）
+  - 支持队列容量限制
+  - 支持任务查询和移除
+- 新增 `PriorityTaskManager` 类 - 优先级任务管理器
+  - 支持优先级任务提交和管理
+- 新增 `TaskDependencyManager` 类 - 任务依赖管理
+  - 支持任务依赖关系定义
+  - 支持循环依赖检测
+  - 支持任务就绪状态查询
+
+#### 任务取消模块 (`fish_async_task.performance.task_cancellation`)
+- 新增 `CancelEvent` 类 - 协作式取消事件
+  - 支持取消标志设置和检查
+  - 支持等待取消事件
+- 新增 `CancellableTask` 类 - 可取消任务封装
+- 新增 `TaskCancellationManager` 类 - 任务取消管理器
+  - 支持任务注册和取消
+  - 支持批量取消
+
+#### 结构化日志模块 (`fish_async_task.performance._structured_logging`)
+- 新增 `StructuredLogger化日志记录器` 类 - 结构
+  - 支持 JSON 格式日志输出
+  - 支持上下文信息记录
+- 新增 `ContextLogger` 类 - 上下文日志记录器
+  - 支持上下文栈管理
+  - 支持 with 语句使用
+
+### 🔧 代码优化
+
+#### 锁竞争优化 (`task_status.py`)
+- 优化 `ShardedTaskStatusWithExpiry.enforce_max_count` 方法
+  - 新增增量清理策略 (`_enforce_max_count_incremental`)
+  - 新增完整清理策略 (`_enforce_max_count_full`)
+  - 智能判断：任务数量超过限制的1.5倍时使用完整清理
+  - 减少锁竞争，提升高并发场景性能
+
+#### 配置管理优化 (`config.py`)
+- 新增 `HotReloadConfig` 类 - 支持热重载的配置管理器
+  - 支持配置缓存和自动过期
+  - 支持手动触发重载
+  - 支持运行时配置更新
+- 新增 `validate_config` 装饰器 - 配置验证装饰器
+  - 支持最小值、最大值验证
+  - 支持允许值列表验证
+  - 支持默认值回退
+
+### 📊 测试改进
+
+#### 新增测试
+- 新增 `tests/test_new_performance_modules.py` 测试文件
+  - 包含 8 个新模块功能测试
+  - 覆盖所有新增功能的单元测试
+
+#### 测试统计
+- 核心模块测试: **114 个** ✅
+- 集成测试: **7 个** ✅
+- 并发压力测试: **6 个** ✅
+- 新增模块测试: **6+ 个** ✅
+
+### 📝 文档更新
+
+#### 新增文档
+- 新增 `docs/ADVANCED_USAGE.md` - 高级使用指南
+  - 多实例管理示例
+  - 任务优先级使用
+  - 任务依赖管理示例
+  - 任务取消使用示例
+  - 性能监控使用示例
+  - 资源管理使用示例
+  - 配置热重载使用示例
+  - 综合示例
+
+#### 性能调优建议
+- 提供配置项推荐值表
+- 包含最佳实践指南
+
+---
+
 ## [0.2.1] - 2025-01-09 - 代码质量改进版本
 
 ### ✨ 代码质量改进

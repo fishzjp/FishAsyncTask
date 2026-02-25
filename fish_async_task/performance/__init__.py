@@ -6,6 +6,10 @@ FishAsyncTask 性能优化模块
 - 优先级队列清理（TaskStatusWithExpiry）
 - 批量状态更新（BatchedStatusUpdater）
 - 自适应工作线程管理（AdaptiveWorkerManager）
+- 性能监控（PerformanceMetrics, SystemHealthMonitor）
+- 任务资源管理（TaskResourceManager）
+- 任务优先级队列（PriorityTaskQueue）
+- 任务取消管理（TaskCancellationManager）
 
 所有优化遵循轻量化原则，核心功能仅使用 Python 标准库。
 """
@@ -15,16 +19,27 @@ from typing import TYPE_CHECKING
 from .adaptive_scaling import AdaptiveWorkerManager
 from .batch_updater import BatchedStatusUpdater
 from .priority_cleanup import TaskStatusWithExpiry
-
-# 导入已实现的类
+from .priority_queue import (
+    PriorityTaskQueue,
+    PriorityTaskManager,
+    TaskDependencyManager,
+)
+from .resource_manager import TaskResourceManager, TimeoutTaskTracker
 from .sharded_status import ShardedTaskStatus
+from .monitoring import PerformanceMetrics, SystemHealthMonitor
 
 __all__ = [
     "ShardedTaskStatus",
     "TaskStatusWithExpiry",
     "BatchedStatusUpdater",
     "AdaptiveWorkerManager",
+    "PerformanceMetrics",
+    "SystemHealthMonitor",
+    "TaskResourceManager",
+    "TimeoutTaskTracker",
+    "PriorityTaskQueue",
+    "PriorityTaskManager",
+    "TaskDependencyManager",
 ]
 
-# 版本信息
-__version__ = "0.1.0"
+__version__ = "0.2.0"

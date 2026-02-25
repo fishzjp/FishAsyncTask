@@ -359,7 +359,105 @@ class ShardedTaskStatusWithExpiry:
         强制执行最大任务数量限制
 
         当任务状态数量超过限制时，按时间顺序清理最旧的任务。
-        需要获取所有锁，按顺序获取避免死锁。
+        使用优化策略：优先尝试增量清理，仅在必要时获取所有锁。
+
+        Args:
+            max_count: 最大任务数量
+
+        Returns:
+            int: 清理的任务数量
+        """
+        total_count = sum(len(shard) for shard in self.shards)
+        if total_count <= max_count:
+            return 0
+
+        if total_count > max_count * 1.5:
+            return self._enforce_max_count_full(max_count)
+
+        return self._enforce_max_count_incremental(max_count)
+
+    def _enforce_max_count_incremental(self, max_count: int) -> int:
+        """
+        增量执行最大任务数量限制
+
+        逐个分片清理，避免一次性获取所有锁，减少锁竞争。
+
+        Args:
+            max_count: 最大任务数量
+
+        Returns:
+            int: 清理的任务数量
+        """
+        total_count = sum(len(shard) for shard in self.shards)
+        if total_count <= max_count:
+            return 0
+
+        cleanup_count = total_count - max_count
+        cleaned_count = 0
+
+        for shard_idx in range(self.shard_count):
+            if cleaned_count >= cleanup_count:
+                break
+
+            with ReadWriteLockContext(self.rw_locks[shard_idx], write=True):
+                shard_dict = self.shards[shard_idx]
+                shard_size = len(shard_dict)
+
+                if shard_size <= 1:
+                    continue
+
+                all_tasks = self._collect_shard_tasks(shard_idx)
+
+                tasks_to_keep_count = max(1, shard_size - (cleanup_count - cleaned_count))
+                tasks_to_keep: set = set()
+                for _, task_id, _ in all_tasks[:tasks_to_keep_count]:
+                    tasks_to_keep.add(task_id)
+
+                keys_to_remove = [k for k in shard_dict.keys() if k not in tasks_to_keep]
+                for key in keys_to_remove:
+                    del shard_dict[key]
+                    cleaned_count += 1
+
+                self.expiry_heaps[shard_idx] = [
+                    (expiry, tid)
+                    for expiry, tid in self.expiry_heaps[shard_idx]
+                    if tid in tasks_to_keep
+                ]
+                heapq.heapify(self.expiry_heaps[shard_idx])
+
+        return cleaned_count
+
+    def _collect_shard_tasks(self, shard_idx: int) -> List[Tuple[float, str, TaskStatusDict]]:
+        """
+        收集单个分片的任务并按时间排序
+
+        Args:
+            shard_idx: 分片索引
+
+        Returns:
+            List[Tuple[float, str, TaskStatusDict]]: 排序后的任务列表
+        """
+        shard_dict = self.shards[shard_idx]
+        tasks: List[Tuple[float, str, TaskStatusDict]] = []
+
+        for task_id, status in shard_dict.items():
+            submit_time = status.get("submit_time")
+            start_time = status.get("start_time")
+            sort_key = (
+                submit_time
+                if submit_time is not None
+                else (start_time if start_time is not None else float("-inf"))
+            )
+            tasks.append((sort_key, task_id, status))
+
+        tasks.sort(key=lambda x: x[0], reverse=True)
+        return tasks
+
+    def _enforce_max_count_full(self, max_count: int) -> int:
+        """
+        完整执行最大任务数量限制
+
+        获取所有分片锁进行清理，适用于任务数量远超限制的场景。
 
         Args:
             max_count: 最大任务数量
@@ -370,47 +468,36 @@ class ShardedTaskStatusWithExpiry:
         acquired_locks: List[ReadWriteLock] = []
 
         try:
-            # 按顺序获取所有写锁（避免死锁）
             for rw_lock in self.rw_locks:
                 rw_lock.acquire_write()
                 acquired_locks.append(rw_lock)
 
-            # 在持有所有锁的情况下统计总任务数，避免竞态条件
             total_count = sum(len(shard) for shard in self.shards)
             if total_count <= max_count:
                 return 0
 
-            # 收集所有任务并按时间排序
             all_tasks = self._collect_all_tasks()
 
-            # 保留最新的 max_count 个任务
             tasks_to_keep: set = set()
             for _, task_id, _, _ in all_tasks[:max_count]:
                 tasks_to_keep.add(task_id)
 
-            # 清理旧任务
             cleaned_count = self._cleanup_old_tasks(all_tasks, tasks_to_keep, max_count)
 
-            # 清理堆中对应的过期条目
             self._rebuild_expiry_heaps(tasks_to_keep)
 
             return cleaned_count
         except Exception:
-            # 确保即使发生异常也能释放已获取的锁
             raise
         finally:
-            # 逆序释放所有已获取的锁（与获取顺序相反）
             for rw_lock in reversed(acquired_locks):
                 try:
                     rw_lock.release_write()
                 except RuntimeError as e:
-                    # RuntimeError: 释放未持有的锁或重复释放
-                    # 记录警告但不中断其他锁的释放
                     logging.getLogger(__name__).warning(
                         f"释放锁时遇到 RuntimeError: {e}，可能锁状态不一致"
                     )
                 except Exception as e:
-                    # 其他未预期的异常，记录错误
                     logging.getLogger(__name__).error(
                         f"释放锁时遇到未预期异常 [{type(e).__name__}]: {e}", exc_info=True
                     )

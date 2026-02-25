@@ -28,7 +28,9 @@
 
 import logging
 import os
-from typing import Optional
+import threading
+import time
+from typing import Any, Callable, Optional
 
 
 class ConfigLoader:
@@ -364,3 +366,166 @@ class ConfigLoader:
             "enable_batch_updates": enable_batch_updates,
             "enable_adaptive_scaling": enable_adaptive_scaling,
         }
+
+
+class HotReloadConfig:
+    """支持热重载的配置管理器"""
+
+    def __init__(
+        self,
+        logger: logging.Logger = None,
+        reload_interval: int = 60,
+    ):
+        """
+        初始化热重载配置管理器
+
+        Args:
+            logger: 日志记录器
+            reload_interval: 重载间隔（秒）
+        """
+        self.logger = logger or logging.getLogger(__name__)
+        self._reload_interval = reload_interval
+        self._last_reload = 0.0
+        self._config_cache: dict = {}
+        self._config_parsers: dict = {}
+        self._lock = threading.Lock()
+
+    def register_config(
+        self,
+        key: str,
+        parser: callable,
+        default: Any = None,
+    ) -> None:
+        """
+        注册配置项
+
+        Args:
+            key: 配置键名
+            parser: 配置解析函数
+            default: 默认值
+        """
+        with self._lock:
+            self._config_parsers[key] = {
+                "parser": parser,
+                "default": default,
+            }
+
+    def get(self, key: str, use_cache: bool = True) -> Any:
+        """
+        获取配置值（支持热重载）
+
+        Args:
+            key: 配置键名
+            use_cache: 是否使用缓存
+
+        Returns:
+            Any: 配置值
+        """
+        current_time = time.time()
+
+        with self._lock:
+            if key not in self._config_parsers:
+                return None
+
+            if (
+                use_cache
+                and key in self._config_cache
+                and current_time - self._last_reload < self._reload_interval
+            ):
+                return self._config_cache[key]
+
+            try:
+                parser_info = self._config_parsers[key]
+                value = parser_info["parser"]()
+
+                if value is None:
+                    value = parser_info["default"]
+
+                self._config_cache[key] = value
+                return value
+
+            except Exception as e:
+                self.logger.warning(f"配置加载失败 [{key}]: {e}")
+                return self._config_parsers[key].get("default")
+
+    def reload(self) -> int:
+        """
+        手动触发配置重载
+
+        Returns:
+            int: 重载的配置数量
+        """
+        with self._lock:
+            reloaded = 0
+
+            for key, parser_info in self._config_parsers.items():
+                try:
+                    value = parser_info["parser"]()
+                    if value is None:
+                        value = parser_info["default"]
+                    self._config_cache[key] = value
+                    reloaded += 1
+
+                except Exception as e:
+                    self.logger.warning(f"配置重载失败 [{key}]: {e}")
+
+            self._last_reload = time.time()
+            return reloaded
+
+    def get_all(self) -> dict:
+        """
+        获取所有配置
+
+        Returns:
+            dict: 所有配置项
+        """
+        with self._lock:
+            return dict(self._config_cache)
+
+    def clear_cache(self) -> None:
+        """清除配置缓存"""
+        with self._lock:
+            self._config_cache.clear()
+            self._last_reload = 0.0
+
+
+def validate_config(
+    min_value: Any = None,
+    max_value: Any = None,
+    default: Any = None,
+    allowed_values: list = None,
+):
+    """
+    配置验证装饰器
+
+    Args:
+        min_value: 最小值
+        max_value: 最大值
+        default: 默认值
+        allowed_values: 允许的值列表
+
+    Returns:
+        装饰器函数
+    """
+
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            value = func(*args, **kwargs)
+
+            if value is None:
+                return default
+
+            if allowed_values is not None and value not in allowed_values:
+                return default
+
+            if min_value is not None and value < min_value:
+                return default
+
+            if max_value is not None and value > max_value:
+                return default
+
+            return value
+
+        return wrapper
+
+    return decorator

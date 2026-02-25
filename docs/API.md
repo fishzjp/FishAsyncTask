@@ -142,3 +142,115 @@ except TaskQueueFullError as e:
     task_id = task_manager.submit_task(my_func, arg1, block=True, timeout=10.0)
 ```
 
+---
+
+## 性能优化模块 (fish_async_task.performance)
+
+### PerformanceMetrics
+
+性能指标收集器，用于收集任务执行指标。
+
+```python
+from fish_async_task.performance import PerformanceMetrics
+
+metrics = PerformanceMetrics(max_history=1000)
+```
+
+**方法：**
+
+- `record_task_submitted()` - 记录任务提交
+- `record_task_completed(execution_time, queue_wait_time)` - 记录任务完成
+- `record_task_failed(execution_time, queue_wait_time)` - 记录任务失败
+- `record_task_cancelled()` - 记录任务取消
+- `get_metrics()` - 获取性能指标
+- `get_percentiles([50, 90, 95, 99])` - 获取百分位数
+
+### SystemHealthMonitor
+
+系统健康状态监控器。
+
+```python
+from fish_async_task.performance import SystemHealthMonitor
+
+monitor = SystemHealthMonitor()
+health = monitor.update_health_status(metrics)
+```
+
+### TaskResourceManager
+
+任务资源管理器，用于跟踪和管理任务资源。
+
+```python
+from fish_async_task.performance import TaskResourceManager
+
+manager = TaskResourceManager(max_tracked=1000)
+manager.start()
+```
+
+### PriorityTaskQueue
+
+优先级任务队列，支持优先级排序。
+
+```python
+from fish_async_task.performance import PriorityTaskQueue
+from fish_async_task.performance.priority_queue import PrioritizedTask
+
+pq = PriorityTaskQueue(maxsize=100)
+task = PrioritizedTask(priority=1, task_id="task_1", func=my_func, args=(), kwargs={})
+pq.put(task)
+```
+
+### TaskDependencyManager
+
+任务依赖管理器。
+
+```python
+from fish_async_task.performance import TaskDependencyManager
+
+dep_manager = TaskDependencyManager()
+dep_manager.add_dependency("task_B", ["task_A"])
+dep_manager.mark_completed("task_A")
+print(dep_manager.is_ready("task_B"))  # True
+```
+
+### TaskCancellationManager
+
+任务取消管理器。
+
+```python
+from fish_async_task.performance import TaskCancellationManager
+
+cancel_manager = TaskCancellationManager()
+event = cancel_manager.register_task("task_1", my_func)
+# 在任务中检查 cancel_event.is_cancelled()
+cancel_manager.cancel_task("task_1")
+```
+
+---
+
+## 配置管理 (fish_async_task.config)
+
+### HotReloadConfig
+
+支持热重载的配置管理器。
+
+```python
+from fish_async_task.config import HotReloadConfig
+import os
+
+config = HotReloadConfig(reload_interval=60)
+config.register_config("MAX_WORKERS", lambda: int(os.getenv("MAX_WORKERS", "10")), 10)
+value = config.get("MAX_WORKERS")
+```
+
+### validate_config
+
+配置验证装饰器。
+
+```python
+from fish_async_task.config import validate_config
+
+@validate_config(min_value=1, max_value=100, default=10)
+def get_queue_size():
+    return int(os.getenv("QUEUE_SIZE", "10"))
+
