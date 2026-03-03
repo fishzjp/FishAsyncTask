@@ -151,7 +151,6 @@ PR创建后,GitHub Actions将自动运行以下检查:
 - [`fish_async_task/performance/adaptive_scaling.py`](fish_async_task/performance/adaptive_scaling.py) - 类型修复
 - [`fish_async_task/performance/priority_cleanup.py`](fish_async_task/performance/priority_cleanup.py) - None值处理
 - [`fish_async_task/performance/_utils.py`](fish_async_task/performance/_utils.py) - 类型转换
-- [`fish_async_task/_cython/__init__.py`](fish_async_task/_cython/__init__.py) - noqa注释
 
 **配置文件**(5个):
 - [`.coveragerc`](.coveragerc) - 覆盖率配置

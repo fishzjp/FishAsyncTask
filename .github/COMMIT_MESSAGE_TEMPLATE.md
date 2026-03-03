@@ -167,7 +167,6 @@ test(concurrent): 添加并发压力测试
 chore(config): 更新mypy配置
 
 升级mypy到1.19.0,添加HTML报告生成。
-配置忽略Cython模块的类型检查。
 ```
 
 ## 发布版本标签

@@ -102,10 +102,4 @@ module = [
 ]
 ignore_missing_imports = true
 
-# 忽略Cython模块(这些是编译扩展,mypy无法检查)
-[[tool.mypy.overrides]]
-module = [
-    "fish_async_task._cython.*"
-]
-ignore_errors = true
 

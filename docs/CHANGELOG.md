@@ -126,7 +126,6 @@
 - 添加类级别类型声明(TaskManager._instance_key, WorkerManager._adaptive_manager)
 - 修复泛型类型(Deque[float]替代deque)
 - 正确处理Optional类型避免None值运算
-- 配置mypy忽略Cython编译扩展模块
 
 #### 代码格式化
 - black自动格式化11个文件,100%符合PEP 8
@@ -221,12 +220,6 @@
 - 优雅降级机制（psutil 不可用时回退）
 - 冷却期机制防止线程数抖动
 
-**Cython 编译支持**
-- 新增 `fish_async_task._cython` 模块
-- 自动检测和回退机制
-- 跨平台编译支持（Windows/Linux/macOS）
-- 完整的编译文档和指南
-
 #### 类型系统扩展
 
 - 新增 `ShardedTaskStatusDict` 类型
@@ -246,11 +239,10 @@
 
 #### 测试和文档
 
-- 新增 97 个测试（单元测试、性能测试、集成测试）
-- 新增 5 个文档文件
+- 新增 91 个测试（单元测试、性能测试、集成测试）
+- 新增 4 个文档文件
 - 新增 MVP 验证指南
 - 新增性能优化迁移指南
-- 新增 Cython 编译指南
 
 ### ⚡ 性能改进
 
@@ -273,14 +265,11 @@
 - 单元测试: 63 个
 - 性能测试: 14 个
 - 集成测试: 7 个
-- Cython 测试: 6 个
 - 并发测试: 7 个
-- **总计: 97 个测试，100% 通过**
+- **总计: 91 个测试，100% 通过**
 
 ### 📝 文档
 
-- 新增 `docs/CYTHON_INSTALLATION.md` - Cython 编译指南
-- 新增 `docs/CROSS_PLATFORM_BUILD.md` - 跨平台编译指南
 - 新增 `docs/MIGRATION.md` - 性能优化迁移指南
 - 更新 `MVP_VALIDATION.md` - MVP 验证指南
 - 更新 `PERFORMANCE_OPTIMIZATION_PLAN.md` - 性能优化计划
@@ -309,7 +298,6 @@
 
 - **可选依赖**:
   - `psutil` - CPU 使用率监控（可选）
-  - `cython` - Cython 编译（可选）
 
 ### 🎯 重点成就
 

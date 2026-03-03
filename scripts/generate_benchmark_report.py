@@ -17,8 +17,8 @@ def generate_benchmark_report():
         "date": datetime.now().isoformat(),
         "version": "0.1.0",
         "summary": {
-            "total_tests": 97,
-            "passed_tests": 97,
+            "total_tests": 91,
+            "passed_tests": 91,
             "failed_tests": 0,
             "pass_rate": "100%"
         },
@@ -51,7 +51,6 @@ def generate_benchmark_report():
             "unit_tests": 63,
             "performance_tests": 14,
             "integration_tests": 7,
-            "cython_tests": 6,
             "concurrent_tests": 7
         },
         "code_quality": {
@@ -64,22 +63,19 @@ def generate_benchmark_report():
             "单线程吞吐量: 2,036,861 任务/秒（目标的 407 倍）",
             "多线程吞吐量: 521,096 任务/秒（目标的 52 倍）",
             "清理性能优化: 6600x 提升（150秒 → 22ms）",
-            "97 个测试全部通过（100% 通过率）",
-            "零外部依赖（核心功能）",
-            "完整的 Cython 编译支持"
+            "91 个测试全部通过（100% 通过率）",
+            "零外部依赖（核心功能）"
         ],
         "files_delivered": {
             "core_implementation": 7,
-            "cython_support": 4,
             "tests": 10,
-            "documentation": 5,
+            "documentation": 4,
             "configuration": 3
         },
         "next_steps": [
             "在生产环境中逐步引入性能优化功能",
             "监控性能指标和资源使用",
-            "根据实际使用情况调整参数",
-            "考虑编译 Cython 扩展以获得极致性能"
+            "根据实际使用情况调整参数"
         ]
     }
 
