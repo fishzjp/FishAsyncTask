@@ -67,3 +67,12 @@ Thumbs.db
 # Reports
 docs/PERFORMANCE_COMPARISON_REPORT.md
 benchmark_report.json
+
+# Rust
+fish_async_task_core/target/
+**/target/
+*.rlib
+*.dylib
+*.dll
+*.exe
+Cargo.lock
