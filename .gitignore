@@ -76,3 +76,9 @@ fish_async_task_core/target/
 *.dll
 *.exe
 Cargo.lock
+
+# Performance baseline generated files
+tests/performance/rust_baseline/*.txt
+tests/performance/rust_baseline/*.html
+tests/performance/rust_baseline/workload_*_tasks.py
+!tests/performance/rust_baseline/baseline_summary.md
