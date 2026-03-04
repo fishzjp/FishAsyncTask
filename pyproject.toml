@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "fish-async-task"
@@ -32,6 +32,11 @@ Homepage = "https://github.com/fishzjp/FishAsyncTask"
 Documentation = "https://github.com/fishzjp/FishAsyncTask#readme"
 Repository = "https://github.com/fishzjp/FishAsyncTask"
 Issues = "https://github.com/fishzjp/FishAsyncTask/issues"
+
+[tool.maturin]
+module-name = "fish_async_task._core"
+features = ["pyo3/extension-module"]
+bindings = "pyo3"
 
 [tool.setuptools]
 packages = ["fish_async_task"]

@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-03-03 17:19:34",
+  "python_version": "3.11",
+  "summary": {
+    "empty_store_overhead_kb": 29.89,
+    "basic_status_per_entry_bytes": 289.56,
+    "full_status_overhead_kb": 5887.01,
+    "full_status_per_entry_bytes": 895.45
+  },
+  "detailed": {
+    "empty_store": {
+      "current_memory_kb": 29.89,
+      "peak_memory_kb": 30.12
+    },
+    "basic_status": {
+      "entry_count": 10000,
+      "total_memory_kb": 2857.6,
+      "per_entry_bytes": 289.56
+    },
+    "full_status": {
+      "entry_count": 10000,
+      "total_memory_kb": 8744.61,
+      "per_entry_bytes": 895.45
+    }
+  }
+}

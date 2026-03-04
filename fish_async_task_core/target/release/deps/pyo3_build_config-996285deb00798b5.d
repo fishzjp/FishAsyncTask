@@ -1,0 +1,14 @@
+/Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/deps/pyo3_build_config-996285deb00798b5.d: /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out/pyo3-build-config-file.txt /Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out/pyo3-build-config.txt
+
+/Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/deps/libpyo3_build_config-996285deb00798b5.rlib: /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out/pyo3-build-config-file.txt /Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out/pyo3-build-config.txt
+
+/Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/deps/libpyo3_build_config-996285deb00798b5.rmeta: /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out/pyo3-build-config-file.txt /Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out/pyo3-build-config.txt
+
+/Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs:
+/Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs:
+/Users/fish/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs:
+/Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out/pyo3-build-config-file.txt:
+/Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out/pyo3-build-config.txt:
+
+# env-dep:CARGO_PKG_VERSION=0.23.5
+# env-dep:OUT_DIR=/Users/fish/code/FishAsyncTask/fish_async_task_core/target/release/build/pyo3-build-config-51ca12cdb5beb01e/out
