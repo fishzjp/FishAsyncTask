@@ -83,23 +83,19 @@ class _RustShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
         self._rust = PyShardedTaskStatus(shard_count, ttl)
 
     def get_status(self, task_id: str) -> Optional[TaskStatusDict]:
-        result = self._rust.get_status(task_id)
-        if result is None:
-            return None
-        # 转换为 TaskStatusDict
-        return {
-            "status": result.get("status"),
-            "submit_time": result.get("submit_time"),
-            "start_time": result.get("start_time"),
-            "end_time": result.get("end_time"),
-            "result": result.get("result"),
-            "error": result.get("error"),
-            "worker_id": result.get("worker_id"),
-        }
+        # Rust 直接返回正确格式的字典，无需二次转换
+        return self._rust.get_status(task_id)
 
     def update_status(self, task_id: str, status: TaskStatusDict) -> None:
-        # 转换为 Rust 需要的格式
-        self._rust.update_status(task_id, status)
+        # 使用高性能 API，直接传递参数避免字典转换开销
+        self._rust.update_status_fast(
+            task_id,
+            status.get("status") or "pending",
+            status.get("submit_time"),
+            status.get("start_time"),
+            status.get("end_time"),
+            status.get("worker_id"),
+        )
 
     def remove_status(self, task_id: str) -> bool:
         return self._rust.remove_status(task_id)

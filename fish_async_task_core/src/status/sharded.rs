@@ -94,34 +94,151 @@ impl PyShardedTaskStatus {
     /// Args:
     ///     task_id: 任务ID
     ///     status: 任务状态字典
-    fn update_status(&self, _py: Python, task_id: &str, status: &Bound<'_, PyDict>) -> PyResult<()> {
+    fn update_status(&self, py: Python, task_id: &str, status: &Bound<'_, PyDict>) -> PyResult<()> {
+        // 在 GIL 下提取所有 Python 数据
         let shard_idx = self._get_shard_index(task_id);
-        let shard = &self.shards[shard_idx];
 
-        // 从 Python 字典提取字段
-        let task_status = TaskStatusDict {
-            status: status.get_item("status")?.map(|v| v.extract::<String>().unwrap_or_default()),
-            submit_time: status.get_item("submit_time")?.and_then(|v| v.extract::<f64>().ok()),
-            start_time: status.get_item("start_time")?.and_then(|v| v.extract::<f64>().ok()),
-            end_time: status.get_item("end_time")?.and_then(|v| v.extract::<f64>().ok()),
-            result: status.get_item("result")?.map(|v| v.into()),
-            error: status.get_item("error")?.map(|v| v.extract::<String>().unwrap_or_default()),
-            worker_id: status.get_item("worker_id")?.map(|v| v.extract::<String>().unwrap_or_default()),
-        };
+        // 提取所有字段（在 GIL 下）
+        let status_opt = status.get_item("status")?.and_then(|v| v.extract::<String>().ok());
+        let submit_time = status.get_item("submit_time")?.and_then(|v| v.extract::<f64>().ok());
+        let start_time = status.get_item("start_time")?.and_then(|v| v.extract::<f64>().ok());
+        let end_time = status.get_item("end_time")?.and_then(|v| v.extract::<f64>().ok());
+        let result = status.get_item("result")?.map(|v| v.into());
+        let error = status.get_item("error")?.and_then(|v| v.extract::<String>().ok());
+        let worker_id = status.get_item("worker_id")?.and_then(|v| v.extract::<String>().ok());
+        let task_id_owned = task_id.to_string();
+        let is_completed = status_opt.as_deref() == Some("completed");
+        let is_failed = status_opt.as_deref() == Some("failed");
 
-        // 如果任务已完成或失败，添加到过期堆
-        if task_status.status.as_deref() == Some("completed")
-            || task_status.status.as_deref() == Some("failed")
-        {
-            if let Some(_end_time) = task_status.end_time {
+        // 在释放 GIL 后执行 Rust 操作
+        py.allow_threads(|| {
+            let shard = &self.shards[shard_idx];
+
+            let task_status = TaskStatusDict {
+                status: status_opt,
+                submit_time,
+                start_time,
+                end_time,
+                result,
+                error,
+                worker_id,
+            };
+
+            // 如果任务已完成或失败，添加到过期堆
+            if (is_completed || is_failed) && end_time.is_some() {
                 let expiry_time = Instant::now() + self.ttl;
                 let mut heap = self.expiry_heaps[shard_idx].write();
-                heap.push((expiry_time, task_id.to_string()));
+                heap.push((expiry_time, task_id_owned.clone()));
             }
+
+            shard.insert(task_id_owned, task_status);
+            Ok(())
+        })
+    }
+
+    /// 高性能更新状态（直接传递参数，避免字典转换）
+    ///
+    /// Args:
+    ///     task_id: 任务ID
+    ///     status: 状态字符串
+    ///     submit_time: 提交时间
+    ///     start_time: 开始时间
+    ///     end_time: 结束时间
+    ///     worker_id: 工作ID
+    #[pyo3(signature = (task_id, status, submit_time=None, start_time=None, end_time=None, worker_id=None))]
+    fn update_status_fast(
+        &self,
+        py: Python,
+        task_id: String,
+        status: String,
+        submit_time: Option<f64>,
+        start_time: Option<f64>,
+        end_time: Option<f64>,
+        worker_id: Option<String>,
+    ) -> PyResult<()> {
+        let shard_idx = self._get_shard_index(&task_id);
+        let task_id_clone = task_id.clone();
+        let is_completed = status == "completed";
+        let is_failed = status == "failed";
+
+        py.allow_threads(|| {
+            let shard = &self.shards[shard_idx];
+
+            let task_status = TaskStatusDict {
+                status: Some(status),
+                submit_time,
+                start_time,
+                end_time,
+                result: None,
+                error: None,
+                worker_id,
+            };
+
+            // 如果任务已完成或失败，添加到过期堆
+            if (is_completed || is_failed) && end_time.is_some() {
+                let expiry_time = Instant::now() + self.ttl;
+                let mut heap = self.expiry_heaps[shard_idx].write();
+                heap.push((expiry_time, task_id_clone));
+            }
+
+            shard.insert(task_id, task_status);
+            Ok(())
+        })
+    }
+
+    /// 高性能批量更新（直接传递参数列表）
+    ///
+    /// Args:
+    ///     items: (task_id, status, submit_time, start_time, end_time, worker_id) 元组列表
+    ///
+    /// Returns:
+    ///     成功更新的数量
+    fn update_status_fast_batch(
+        &self,
+        py: Python,
+        items: Vec<(String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>)>,
+    ) -> PyResult<usize> {
+        // 阶段 1: 计算分片索引（在 GIL 下）
+        let mut extracted_items = Vec::with_capacity(items.len());
+
+        for (task_id, status, submit_time, start_time, end_time, worker_id) in items {
+            let shard_idx = self._get_shard_index(&task_id);
+            let is_completed = status == "completed";
+            let is_failed = status == "failed";
+
+            extracted_items.push((task_id, status, submit_time, start_time, end_time, worker_id, shard_idx, is_completed, is_failed));
         }
 
-        shard.insert(task_id.to_string(), task_status);
-        Ok(())
+        // 阶段 2: 释放 GIL 后执行批量 Rust 操作
+        py.allow_threads(|| {
+            let mut count = 0;
+
+            for (task_id, status, submit_time, start_time, end_time, worker_id, shard_idx, is_completed, is_failed) in extracted_items {
+                let shard = &self.shards[shard_idx];
+
+                let task_status = TaskStatusDict {
+                    status: Some(status),
+                    submit_time,
+                    start_time,
+                    end_time,
+                    result: None,
+                    error: None,
+                    worker_id,
+                };
+
+                // 如果任务已完成或失败，添加到过期堆
+                if (is_completed || is_failed) && end_time.is_some() {
+                    let expiry_time = Instant::now() + self.ttl;
+                    let mut heap = self.expiry_heaps[shard_idx].write();
+                    heap.push((expiry_time, task_id.clone()));
+                }
+
+                shard.insert(task_id, task_status);
+                count += 1;
+            }
+
+            Ok(count)
+        })
     }
 
     /// 移除任务状态
@@ -223,17 +340,54 @@ impl PyShardedTaskStatus {
     /// Returns:
     ///     成功更新的数量
     fn update_status_batch(&self, py: Python, items: Vec<(String, PyObject)>) -> PyResult<usize> {
+        // 阶段 1: 在 GIL 下提取所有 Python 数据到 Rust 结构
+        let mut extracted_items = Vec::with_capacity(items.len());
+
+        for (task_id, status_obj) in items {
+            let status_dict = status_obj.extract::<Bound<'_, PyDict>>(py);
+            if let Ok(dict) = status_dict {
+                // 提取所有字段
+                let status_opt = dict.get_item("status")?.and_then(|v| v.extract::<String>().ok());
+                let submit_time = dict.get_item("submit_time")?.and_then(|v| v.extract::<f64>().ok());
+                let start_time = dict.get_item("start_time")?.and_then(|v| v.extract::<f64>().ok());
+                let end_time = dict.get_item("end_time")?.and_then(|v| v.extract::<f64>().ok());
+                let result = dict.get_item("result")?.map(|v| v.into());
+                let error = dict.get_item("error")?.and_then(|v| v.extract::<String>().ok());
+                let worker_id = dict.get_item("worker_id")?.and_then(|v| v.extract::<String>().ok());
+                let is_completed = status_opt.as_deref() == Some("completed");
+                let is_failed = status_opt.as_deref() == Some("failed");
+                let shard_idx = self._get_shard_index(&task_id);
+
+                extracted_items.push((task_id, TaskStatusDict {
+                    status: status_opt,
+                    submit_time,
+                    start_time,
+                    end_time,
+                    result,
+                    error,
+                    worker_id,
+                }, shard_idx, is_completed, is_failed));
+            }
+        }
+
+        // 阶段 2: 释放 GIL 后执行批量 Rust 操作
         py.allow_threads(|| {
             let mut count = 0;
-            for (task_id, status_obj) in items {
-                Python::with_gil(|py| {
-                    if let Ok(status_dict) = status_obj.extract::<Bound<'_, PyDict>>(py) {
-                        if self.update_status(py, &task_id, &status_dict).is_ok() {
-                            count += 1;
-                        }
-                    }
-                });
+
+            for (task_id, task_status, shard_idx, is_completed, is_failed) in extracted_items {
+                let shard = &self.shards[shard_idx];
+
+                // 如果任务已完成或失败，添加到过期堆
+                if (is_completed || is_failed) && task_status.end_time.is_some() {
+                    let expiry_time = Instant::now() + self.ttl;
+                    let mut heap = self.expiry_heaps[shard_idx].write();
+                    heap.push((expiry_time, task_id.clone()));
+                }
+
+                shard.insert(task_id, task_status);
+                count += 1;
             }
+
             Ok(count)
         })
     }
