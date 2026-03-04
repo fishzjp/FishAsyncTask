@@ -192,4 +192,66 @@ impl PyPriorityTaskQueue {
         ids.clear();
         Ok(())
     }
+
+    /// 批量向队列添加任务
+    ///
+    /// Args:
+    ///     items: (priority, task_id, submit_time) 元组列表
+    ///
+    /// Returns:
+    ///     成功添加的数量
+    fn put_batch(&self, py: Python, items: Vec<(i32, String, f64)>) -> PyResult<usize> {
+        py.allow_threads(|| {
+            let mut count = 0;
+            let mut queue = self.queue.lock();
+            let mut ids = self.task_ids.lock();
+
+            for (priority, task_id, submit_time) in items {
+                // 检查队列是否已满
+                if self.maxsize > 0 && ids.len() >= self.maxsize {
+                    break;
+                }
+
+                let task = PrioritizedTask {
+                    priority,
+                    task_id: task_id.clone(),
+                    submit_time,
+                };
+                queue.push(task);
+                ids.insert(task_id);
+                count += 1;
+            }
+
+            Ok(count)
+        })
+    }
+
+    /// 批量从队列获取任务ID
+    ///
+    /// Args:
+    ///     max_count: 最大获取数量，None 表示获取所有
+    ///
+    /// Returns:
+    ///     获取的任务ID列表（按优先级排序）
+    #[pyo3(signature = (max_count=None))]
+    fn get_batch(&self, py: Python, max_count: Option<usize>) -> PyResult<Vec<String>> {
+        py.allow_threads(|| {
+            let mut queue = self.queue.lock();
+            let mut ids = self.task_ids.lock();
+            let mut result = Vec::new();
+
+            let limit = max_count.unwrap_or(usize::MAX);
+
+            while result.len() < limit {
+                if let Some(task) = queue.pop() {
+                    ids.remove(&task.task_id);
+                    result.push(task.task_id);
+                } else {
+                    break;
+                }
+            }
+
+            Ok(result)
+        })
+    }
 }

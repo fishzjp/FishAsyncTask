@@ -17,6 +17,7 @@ pub mod queue;
 
 // 导出类型供测试使用
 pub use types::PrioritizedTask;
+pub use status::PyBatchedUpdater;
 
 /// FishAsyncTask Core Python 模块
 #[pymodule(name = "_core")]
@@ -25,5 +26,6 @@ fn fish_async_task_core(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<queue::PyPriorityTaskQueue>()?;
     m.add_class::<queue::PyTaskDependencyManager>()?;
     m.add_class::<types::PrioritizedTask>()?;
+    m.add_class::<status::PyBatchedUpdater>()?;
     Ok(())
 }

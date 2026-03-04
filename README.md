@@ -1,14 +1,15 @@
 # FishAsyncTask
 
-一个纯Python实现的异步任务管理器，支持线程池和动态伸缩。
+高性能异步任务管理器，支持线程池和动态伸缩。核心模块采用 Rust 实现，提供卓越性能。
 
 [![GitHub](https://img.shields.io/github/stars/fishzjp/FishAsyncTask?style=social)](https://github.com/fishzjp/FishAsyncTask)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/)
 
 ## 目录
 
 - [特性](#特性)
+- [性能](#性能)
 - [安装](#安装)
 - [快速开始](#快速开始)
 - [文档](#文档)
@@ -18,12 +19,14 @@
 
 ## 特性
 
-- 🚀 **纯Python实现**：无需额外依赖，使用标准库实现
+### 核心功能
+- 🚀 **Rust 核心实现**：状态存储和优先级队列使用 Rust 实现，性能提升 2-4x
 - 🔄 **动态伸缩**：根据任务队列大小自动调整工作线程数量
 - 📊 **任务状态追踪**：实时查询任务执行状态和结果
 - 🧹 **自动清理**：自动清理过期的任务状态记录
-- 🔒 **线程安全**：使用锁机制保证线程安全
-- 🎯 **单例模式**：支持多实例管理，不同业务模块可使用独立实例
+- 🔒 **线程安全**：使用无锁数据结构保证并发安全
+
+### 高级功能
 - ⏱️ **任务超时**：支持配置任务执行超时时间
 - 🚦 **队列控制**：支持阻塞和非阻塞两种任务提交模式
 - 📈 **性能监控**：内置性能指标收集和健康状态监控
@@ -32,6 +35,25 @@
 - 🚫 **任务取消**：支持协作式任务取消
 - 💾 **资源管理**：自动跟踪和清理任务相关资源，防止泄漏
 - ⚙️ **配置热重载**：支持运行时配置动态更新
+
+### 架构特点
+- 🎯 **单例模式**：支持多实例管理，不同业务模块可使用独立实例
+- 🌐 **Python/Rust 混合**：Python API 兼容，自动回退到纯 Python 实现
+- 📦 **批量 API**：支持批量操作，减少跨语言调用开销
+
+## 性能
+
+Rust 核心实现相比纯 Python 实现的性能提升：
+
+| 操作 | Python | Rust | 加速比 |
+|------|--------|------|--------|
+| 并发状态写入 | 1.47M ops/s | 1.79M ops/s | **1.22x** |
+| 并发状态读取 | 1.07M QPS | 1.38M QPS | **1.29x** |
+| 队列入队 | 603K ops/s | 1.30M ops/s | **2.16x** |
+| 队列出队 | 705K ops/s | 1.30M ops/s | **1.85x** |
+| 内存占用 (5K任务) | 1,432 KB | 0.3 KB | **~100% 节省** |
+
+详细性能数据请参考 [性能基线报告](tests/performance/rust_baseline/baseline_summary.md)
 
 ## 安装
 
@@ -52,7 +74,16 @@ pip install git+https://github.com/fishzjp/FishAsyncTask.git
 ```bash
 git clone https://github.com/fishzjp/FishAsyncTask.git
 cd FishAsyncTask
+
+# 安装 Python 依赖
 pip install -e ".[dev,performance]"
+
+# 构建 Rust 扩展（可选，性能更好）
+cd fish_async_task_core
+pip install maturin
+maturin develop --release
+
+# 安装 pre-commit hooks
 pre-commit install
 ```
 
@@ -60,8 +91,20 @@ pre-commit install
 - `pytest`、`pytest-cov`、`pytest-benchmark` - 测试框架
 - `black`、`isort` - 代码格式化
 - `mypy`、`interrogate` - 代码质量检查
+- `maturin` - Rust 扩展构建工具
 - `locust` - 负载测试
 - `psutil`、`redis`、`huey`、`dramatiq` - 性能测试依赖
+
+### 验证 Rust 扩展
+
+安装后可以验证 Rust 扩展是否可用：
+
+```python
+from fish_async_task._rust import is_rust_available
+print(f"Rust 扩展可用: {is_rust_available()}")
+```
+
+如果 Rust 扩展不可用，库会自动回退到纯 Python 实现。
 
 > 📖 详细的安装说明请参考 [安装文档](docs/INSTALL.md)
 
@@ -109,8 +152,8 @@ task_manager.shutdown()
 ```python
 # 阻塞模式提交任务（等待队列有空间）
 task_id = task_manager.submit_task(
-    my_task, 
-    "任务2", 
+    my_task,
+    "任务2",
     value=200,
     block=True,        # 启用阻塞模式
     timeout=10.0      # 最多等待10秒
@@ -132,6 +175,15 @@ order_manager = TaskManager(instance_key="order")
 payment_manager = TaskManager(instance_key="payment")
 ```
 
+### 使用优先级队列
+
+```python
+# 高优先级任务会优先执行
+task_manager.submit_task(high_priority_task, priority=1)
+task_manager.submit_task(normal_task, priority=5)
+task_manager.submit_task(low_priority_task, priority=10)
+```
+
 ## 文档
 
 详细的文档请参考以下链接：
@@ -143,6 +195,7 @@ payment_manager = TaskManager(instance_key="payment")
 - 🚀 [高级使用指南](docs/ADVANCED_USAGE.md) - 性能监控、资源管理、任务优先级等高级功能
 - ❓ [常见问题](docs/FAQ.md) - FAQ 和问题解答
 - 📝 [更新日志](docs/CHANGELOG.md) - 版本更新记录
+- 🔧 [Rust 重构技术方案](docs/plans/2026-03-03-rust-refactor-design.md) - Rust 实现的技术细节
 
 ## 使用场景
 

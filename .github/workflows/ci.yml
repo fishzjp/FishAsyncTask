@@ -8,16 +8,26 @@ on:
 
 jobs:
   test:
-    name: Test Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.9", "3.11", "3.12"]
+        exclude:
+          # Windows 只测试 3.11 和 3.12
+          - os: windows-latest
+            python-version: "3.9"
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.os == 'ubuntu-latest' && 'x86_64-unknown-linux-gnu' || matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -34,27 +44,74 @@ jobs:
         path: |
           ~/.cache/uv
           .venv
-        key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          ~/.cargo/registry
+          ~/.cargo/git
+          fish_async_task_core/target
+        key: ${{ runner.os }}-uv-rust-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock', 'fish_async_task_core/Cargo.toml', 'fish_async_task_core/Cargo.lock') }}
         restore-keys: |
+          ${{ runner.os }}-uv-rust-${{ matrix.python-version }}-
+          ${{ runner.os }}-uv-rust-
           ${{ runner.os }}-uv-
 
     - name: Create virtual environment
       run: |
         uv venv --python ${{ matrix.python-version }}
 
-    - name: Install dependencies
+    - name: Install Maturin and dependencies
+      shell: bash
       run: |
-        uv pip install -e ".[dev,performance]"
+        # Windows bash 兼容性
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          source .venv/Scripts/activate
+        else
+          source .venv/bin/activate
+        fi
+        pip install maturin[patchelf]
+        pip install -e ".[dev,performance]"
+
+    - name: Build Rust extension
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          source .venv/Scripts/activate
+        else
+          source .venv/bin/activate
+        fi
+        cd fish_async_task_core
+        maturin develop --release
+
+    - name: Verify Rust extension
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          source .venv/Scripts/activate
+        else
+          source .venv/bin/activate
+        fi
+        python -c "from fish_async_task._rust import is_rust_available; print('Rust extension available:', is_rust_available())"
 
     - name: Run tests
+      shell: bash
       run: |
-        source .venv/bin/activate
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          source .venv/Scripts/activate
+        else
+          source .venv/bin/activate
+        fi
         pytest tests/ -v --tb=short
 
     - name: Run performance tests (optional)
-      if: matrix.python-version == '3.11'
+      if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
+      shell: bash
       run: |
         source .venv/bin/activate
         pytest tests/performance/ -v --tb=short
       continue-on-error: true
 
+    - name: Run Rust compatibility tests
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      run: |
+        source .venv/bin/activate
+        pytest tests/test_rust_compat.py -v --tb=short
+      continue-on-error: true
