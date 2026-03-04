@@ -25,8 +25,8 @@ impl TaskStatus {
         }
     }
 
-    /// 从字符串创建状态
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// 从字符串创建状态（避免与 std::str::FromStr 冲突）
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "pending" => Some(TaskStatus::Pending),
             "running" => Some(TaskStatus::Running),
@@ -66,11 +66,7 @@ pub struct PrioritizedTask {
 impl PrioritizedTask {
     #[new]
     #[pyo3(signature = (priority, task_id, submit_time))]
-    fn new(
-        priority: i32,
-        task_id: String,
-        submit_time: f64,
-    ) -> Self {
+    fn new(priority: i32, task_id: String, submit_time: f64) -> Self {
         Self {
             priority,
             task_id,

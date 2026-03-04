@@ -4,8 +4,8 @@
 
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use petgraph::graph::DiGraph;
 use petgraph::algo::is_cyclic_directed;
+use petgraph::graph::DiGraph;
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -41,13 +41,13 @@ impl PyTaskDependencyManager {
         // 添加到依赖映射
         self.dependencies
             .entry(task_id.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(dep_id.to_string());
 
         // 添加到反向映射
         self.dependents
             .entry(dep_id.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(task_id.to_string());
 
         Ok(())

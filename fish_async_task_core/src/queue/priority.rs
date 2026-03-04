@@ -4,8 +4,8 @@
 
 use crate::types::PrioritizedTask;
 use parking_lot::Mutex;
-use pyo3::prelude::*;
 use pyo3::exceptions::PyException;
+use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,7 +46,7 @@ impl PyPriorityTaskQueue {
     ///     submit_time: 提交时间
     ///     block: 是否阻塞等待队列有空间
     ///     timeout: 超时时间（秒），None 表示无限等待
-    #[pyo3(signature = (priority, task_id, submit_time, block=true, timeout=None))]
+    #[pyo3(signature = (priority, task_id, submit_time, block=true, _timeout=None))]
     fn put(
         &self,
         py: Python,
@@ -54,16 +54,14 @@ impl PyPriorityTaskQueue {
         task_id: String,
         submit_time: f64,
         block: bool,
-        timeout: Option<f64>,
+        _timeout: Option<f64>,
     ) -> PyResult<()> {
         py.allow_threads(|| {
             // 检查队列是否已满
             {
                 let ids = self.task_ids.lock();
                 if self.maxsize > 0 && ids.len() >= self.maxsize && !block {
-                    return Err(PyErr::new::<PyException, _>(
-                        "Queue is full".to_string(),
-                    ));
+                    return Err(PyErr::new::<PyException, _>("Queue is full".to_string()));
                 }
             }
 
@@ -99,7 +97,7 @@ impl PyPriorityTaskQueue {
             let task_ids = self.task_ids.clone();
 
             if block {
-                let duration = timeout.map(|t| Duration::from_secs_f64(t));
+                let duration = timeout.map(Duration::from_secs_f64);
                 let start = std::time::Instant::now();
 
                 loop {
@@ -114,9 +112,7 @@ impl PyPriorityTaskQueue {
 
                     if let Some(d) = duration {
                         if start.elapsed() >= d {
-                            return Err(PyErr::new::<PyException, _>(
-                                "Queue is empty".to_string(),
-                            ));
+                            return Err(PyErr::new::<PyException, _>("Queue is empty".to_string()));
                         }
                     }
 
@@ -129,9 +125,7 @@ impl PyPriorityTaskQueue {
                     ids.remove(&task.task_id);
                     Ok(task.task_id)
                 } else {
-                    Err(PyErr::new::<PyException, _>(
-                        "Queue is empty".to_string(),
-                    ))
+                    Err(PyErr::new::<PyException, _>("Queue is empty".to_string()))
                 }
             }
         })

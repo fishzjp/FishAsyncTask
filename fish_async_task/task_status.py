@@ -17,14 +17,17 @@ from .types import TaskStatus, TaskStatusDict
 
 class ReadWriteLock:
     """
-    读写锁实现
+    写优先的读写锁实现
 
     允许多个读操作并发执行，写操作独占访问。
+    使用写优先策略防止写饥饿：当有写操作等待时，新的读操作会排队。
+
     基于 threading.Condition 实现，支持上下文管理器。
 
     使用场景：
     - 读多写少的场景，读操作可以并发执行
     - 写操作需要独占访问，与所有读操作互斥
+    - 需要防止写饥饿的场景
 
     示例：
         lock = ReadWriteLock()
@@ -44,14 +47,18 @@ class ReadWriteLock:
         """初始化读写锁"""
         self._read_ready = threading.Condition(threading.RLock())
         self._readers = 0
+        self._writers_waiting = 0  # 等待的写操作数量
 
     def acquire_read(self) -> None:
         """
         获取读锁
 
-        多个线程可以同时获取读锁。
+        如果有写操作在等待，新的读操作会排队等待，防止写饥饿。
         """
         with self._read_ready:
+            # 如果有写操作在等待，读操作需要等待
+            while self._writers_waiting > 0:
+                self._read_ready.wait()
             self._readers += 1
 
     def release_read(self) -> None:
@@ -63,6 +70,7 @@ class ReadWriteLock:
         with self._read_ready:
             self._readers -= 1
             if self._readers == 0:
+                # 优先唤醒写操作
                 self._read_ready.notify_all()
 
     def acquire_write(self) -> None:
@@ -70,8 +78,16 @@ class ReadWriteLock:
         获取写锁
 
         写锁是独占的，会等待所有读操作完成后才能获取。
+        使用写优先策略，防止写饥饿。
         """
+        with self._read_ready:
+            # 增加等待的写操作计数
+            self._writers_waiting += 1
+
+        # 获取底层锁（这样其他读操作无法继续）
         self._read_ready.acquire()
+
+        # 等待所有读操作完成
         while self._readers > 0:
             self._read_ready.wait()
 
@@ -79,9 +95,18 @@ class ReadWriteLock:
         """
         释放写锁
 
-        释放后，其他读操作或写操作可以继续执行。
+        释放后，唤醒所有等待的读操作和写操作。
         """
+        with self._read_ready:
+            # 减少等待的写操作计数
+            self._writers_waiting -= 1
+
+        # 释放底层锁并唤醒所有等待者
         self._read_ready.release()
+
+        with self._read_ready:
+            # 唤醒所有等待的操作
+            self._read_ready.notify_all()
 
 
 class ReadWriteLockContext:
@@ -616,8 +641,16 @@ class ShardedTaskStatusWithExpiry:
             for rw_lock in reversed(acquired_locks):
                 try:
                     rw_lock.release_write()
-                except Exception:
-                    pass
+                except RuntimeError as e:
+                    # 锁状态不一致，记录警告
+                    logging.getLogger(__name__).warning(
+                        f"释放锁时遇到 RuntimeError: {e}，可能锁状态不一致"
+                    )
+                except Exception as e:
+                    # 其他异常也记录
+                    logging.getLogger(__name__).error(
+                        f"释放锁时遇到未预期异常 [{type(e).__name__}]: {e}"
+                    )
 
         # 创建新的分片结构
         new_shards: List[Dict[str, TaskStatusDict]] = [dict() for _ in range(new_shard_count)]

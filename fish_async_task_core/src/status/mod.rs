@@ -2,10 +2,10 @@
 //!
 //! 提供高性能的分片任务状态存储实现。
 
+pub mod batch;
 pub mod sharded;
 pub mod store;
-pub mod batch;
 
+pub use batch::PyBatchedUpdater;
 pub use sharded::PyShardedTaskStatus;
 pub use store::PyTaskStatusStore;
-pub use batch::PyBatchedUpdater;

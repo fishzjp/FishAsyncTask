@@ -1,29 +1,29 @@
 {
-  "generated_at": "2026-03-03 17:19:25",
+  "generated_at": "2026-03-04 11:35:28",
   "python_version": "3.11",
   "summary": {
-    "write_throughput_ops_per_sec": 1929746.0,
-    "read_avg_latency_ms": 0.0007,
-    "read_p50_latency_ms": 0.001,
-    "read_p99_latency_ms": 0.0012,
-    "cleanup_time_for_1k_tasks_ms": 1.04
+    "write_throughput_ops_per_sec": 157808.0,
+    "read_avg_latency_ms": 0.004,
+    "read_p50_latency_ms": 0.0041,
+    "read_p99_latency_ms": 0.0081,
+    "cleanup_time_for_1k_tasks_ms": 2.45
   },
   "detailed": {
     "sequential_write": {
       "count": 10000,
-      "elapsed_seconds": 0.005,
-      "throughput_ops_per_sec": 1929746.0
+      "elapsed_seconds": 0.063,
+      "throughput_ops_per_sec": 157808.0
     },
     "sequential_read": {
       "count": 10000,
-      "avg_latency_ms": 0.0007,
-      "p50_latency_ms": 0.001,
-      "p99_latency_ms": 0.0012
+      "avg_latency_ms": 0.004,
+      "p50_latency_ms": 0.0041,
+      "p99_latency_ms": 0.0081
     },
     "cleanup": {
       "total_count": 1000,
       "cleaned_count": 1000,
-      "elapsed_seconds": 0.001
+      "elapsed_seconds": 0.002
     }
   }
 }

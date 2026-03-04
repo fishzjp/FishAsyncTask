@@ -28,7 +28,7 @@ impl PyTaskStatusStore {
     /// 获取任务状态
     fn get(&self, py: Python, task_id: &str) -> PyResult<PyObject> {
         if let Some(status) = self.store.get(task_id) {
-            let dict = PyDict::new_bound(py);
+            let dict = PyDict::new(py);
             if let Some(ref s) = status.status {
                 dict.set_item("status", s)?;
             }
@@ -57,15 +57,27 @@ impl PyTaskStatusStore {
     }
 
     /// 更新任务状态
-    fn update(&self, py: Python, task_id: &str, status: &Bound<'_, PyDict>) -> PyResult<()> {
+    fn update(&self, _py: Python, task_id: &str, status: &Bound<'_, PyDict>) -> PyResult<()> {
         let task_status = TaskStatusDict {
-            status: status.get_item("status")?.map(|v| v.extract::<String>().unwrap_or_default()),
-            submit_time: status.get_item("submit_time")?.and_then(|v| v.extract::<f64>().ok()),
-            start_time: status.get_item("start_time")?.and_then(|v| v.extract::<f64>().ok()),
-            end_time: status.get_item("end_time")?.and_then(|v| v.extract::<f64>().ok()),
+            status: status
+                .get_item("status")?
+                .map(|v| v.extract::<String>().unwrap_or_default()),
+            submit_time: status
+                .get_item("submit_time")?
+                .and_then(|v| v.extract::<f64>().ok()),
+            start_time: status
+                .get_item("start_time")?
+                .and_then(|v| v.extract::<f64>().ok()),
+            end_time: status
+                .get_item("end_time")?
+                .and_then(|v| v.extract::<f64>().ok()),
             result: status.get_item("result")?.map(|v| v.into()),
-            error: status.get_item("error")?.map(|v| v.extract::<String>().unwrap_or_default()),
-            worker_id: status.get_item("worker_id")?.map(|v| v.extract::<String>().unwrap_or_default()),
+            error: status
+                .get_item("error")?
+                .map(|v| v.extract::<String>().unwrap_or_default()),
+            worker_id: status
+                .get_item("worker_id")?
+                .map(|v| v.extract::<String>().unwrap_or_default()),
         };
 
         self.store.insert(task_id.to_string(), task_status);

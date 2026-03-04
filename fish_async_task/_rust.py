@@ -3,10 +3,11 @@
 # 尝试导入 Rust 实现的扩展
 try:
     from fish_async_task._core import (
-        PyShardedTaskStatus,
         PyPriorityTaskQueue,
+        PyShardedTaskStatus,
         PyTaskDependencyManager,
     )
+
     _RUST_AVAILABLE = True
 except ImportError:
     _RUST_AVAILABLE = False

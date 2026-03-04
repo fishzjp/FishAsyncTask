@@ -11,13 +11,13 @@
 use pyo3::prelude::*;
 
 // 导出模块
-pub mod types;
-pub mod status;
 pub mod queue;
+pub mod status;
+pub mod types;
 
 // 导出类型供测试使用
-pub use types::PrioritizedTask;
 pub use status::PyBatchedUpdater;
+pub use types::PrioritizedTask;
 
 /// FishAsyncTask Core Python 模块
 #[pymodule(name = "_core")]

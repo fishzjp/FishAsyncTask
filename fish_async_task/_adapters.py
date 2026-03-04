@@ -4,16 +4,18 @@ Python/Rust 统一适配器
 提供统一的接口，自动选择 Rust 或 Python 实现。
 """
 
-from typing import Optional, Union, List, Any
+from typing import Any, List, Optional, Union
+
 from .types import TaskStatusDict
 
 # 尝试导入 Rust 实现
 try:
     from ._rust import (
-        PyShardedTaskStatus,
         PyPriorityTaskQueue,
+        PyShardedTaskStatus,
         PyTaskDependencyManager,
     )
+
     _RUST_AVAILABLE = True
 except ImportError:
     _RUST_AVAILABLE = False
@@ -22,9 +24,10 @@ except ImportError:
     PyTaskDependencyManager = None
 
 
+from .performance.priority_queue import PriorityTaskQueue as PythonPriorityTaskQueue
+
 # 导入 Python 回退实现
 from .task_status import ShardedTaskStatusWithExpiry
-from .performance.priority_queue import PriorityTaskQueue as PythonPriorityTaskQueue
 
 
 class ShardedTaskStatusAdapter:
@@ -87,15 +90,21 @@ class _RustShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
         return self._rust.get_status(task_id)
 
     def update_status(self, task_id: str, status: TaskStatusDict) -> None:
-        # 使用高性能 API，直接传递参数避免字典转换开销
-        self._rust.update_status_fast(
-            task_id,
-            status.get("status") or "pending",
-            status.get("submit_time"),
-            status.get("start_time"),
-            status.get("end_time"),
-            status.get("worker_id"),
-        )
+        # 当需要 result 或 error 字段时，使用完整 update_status 方法
+        # 其他情况使用高性能 update_status_fast 方法
+        if "result" in status or "error" in status:
+            # 使用字典方式更新以支持 result 和 error
+            self._rust.update_status(task_id, status)
+        else:
+            # 使用高性能 API，直接传递参数避免字典转换开销
+            self._rust.update_status_fast(
+                task_id,
+                status.get("status") or "pending",
+                status.get("submit_time"),
+                status.get("start_time"),
+                status.get("end_time"),
+                status.get("worker_id"),
+            )
 
     def remove_status(self, task_id: str) -> bool:
         return self._rust.remove_status(task_id)
@@ -158,7 +167,9 @@ class PriorityTaskQueueAdapter:
         else:
             return _PythonPriorityTaskQueueAdapter(maxsize)
 
-    def put(self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None) -> None:
+    def put(
+        self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None
+    ) -> None:
         """向队列添加任务"""
         raise NotImplementedError
 
@@ -184,11 +195,15 @@ class _RustPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
 
     def __init__(self, maxsize: int):
         import time
+
         self._rust = PyPriorityTaskQueue(maxsize)
         self._tasks = {}  # task_id -> (priority, task_id, submit_time)
 
-    def put(self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None) -> None:
+    def put(
+        self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None
+    ) -> None:
         import time
+
         submit_time = time.time()
         self._tasks[task_id] = (priority, task_id, submit_time)
         self._rust.put(priority, task_id, submit_time, block, timeout)
@@ -212,10 +227,14 @@ class _PythonPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
     def __init__(self, maxsize: int):
         self._inner = PythonPriorityTaskQueue(maxsize=maxsize)
 
-    def put(self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None) -> None:
+    def put(
+        self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None
+    ) -> None:
         # Python PriorityTaskQueue 需要完整的任务对象
-        from .performance.priority_queue import PrioritizedTask
         import time
+
+        from .performance.priority_queue import PrioritizedTask
+
         task = PrioritizedTask(
             priority=priority,
             task_id=task_id,

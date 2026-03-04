@@ -174,6 +174,7 @@ class TaskManager:
         self._scale_scheduled = False
         self._scale_lock = threading.Lock()
         self._scale_check_interval = 0.1  # 扩缩容检查间隔（秒）
+        self._scale_scheduled_time = 0.0  # 上次调度时间（用于超时重置）
 
         # 初始化任务状态管理器
         self.status_manager = TaskStatusManager(
@@ -230,12 +231,28 @@ class TaskManager:
 
         使用Timer实现延迟检查，避免每次提交任务都触发扩缩容检查，
         减少锁竞争，提高高并发场景下的性能。
+
+        包含安全机制：如果调度标志长时间未重置（可能由于Timer异常），
+        会自动重置以防止后续检查被阻塞。
         """
         with self._scale_lock:
+            # 检查是否需要重置过期的调度标志（安全机制）
+            current_time = time.time()
             if self._scale_scheduled:
-                # 已经有一个检查在等待中，跳过
+                # 如果调度时间超过 30 秒未重置，强制重置（可能Timer异常）
+                if current_time - self._scale_scheduled_time > 30:
+                    self.logger.warning(
+                        f"检测到调度标志超时（{(current_time - self._scale_scheduled_time):.1f}秒），"
+                        f"强制重置以防止扩缩容检查阻塞"
+                    )
+                    self._scale_scheduled = False
+
+            # 如果已经有一个检查在等待中，跳过
+            if self._scale_scheduled:
                 return
+
             self._scale_scheduled = True
+            self._scale_scheduled_time = current_time
 
         # 在后台线程中执行扩缩容检查
         def delayed_scale_check() -> None:

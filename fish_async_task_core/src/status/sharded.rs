@@ -11,13 +11,31 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// 过期堆类型别名
+type ExpiryHeap = Arc<RwLock<BinaryHeap<(Instant, String)>>>;
+
+/// 批量更新项类型别名
+#[allow(clippy::type_complexity)]
+type BatchUpdateItem = (
+    String,
+    String,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<String>,
+    usize,
+    bool,
+    bool,
+);
+
 /// 分片任务状态存储
 ///
 /// 使用 DashMap 实现无锁并发分片存储，支持高并发读写。
 #[pyclass]
 pub struct PyShardedTaskStatus {
     shards: Vec<Arc<DashMap<String, TaskStatusDict>>>,
-    expiry_heaps: Vec<Arc<RwLock<BinaryHeap<(Instant, String)>>>>,
+    #[allow(clippy::type_complexity)]
+    expiry_heaps: Vec<ExpiryHeap>,
     shard_count: usize,
     ttl: Duration,
 }
@@ -99,13 +117,25 @@ impl PyShardedTaskStatus {
         let shard_idx = self._get_shard_index(task_id);
 
         // 提取所有字段（在 GIL 下）
-        let status_opt = status.get_item("status")?.and_then(|v| v.extract::<String>().ok());
-        let submit_time = status.get_item("submit_time")?.and_then(|v| v.extract::<f64>().ok());
-        let start_time = status.get_item("start_time")?.and_then(|v| v.extract::<f64>().ok());
-        let end_time = status.get_item("end_time")?.and_then(|v| v.extract::<f64>().ok());
+        let status_opt = status
+            .get_item("status")?
+            .and_then(|v| v.extract::<String>().ok());
+        let submit_time = status
+            .get_item("submit_time")?
+            .and_then(|v| v.extract::<f64>().ok());
+        let start_time = status
+            .get_item("start_time")?
+            .and_then(|v| v.extract::<f64>().ok());
+        let end_time = status
+            .get_item("end_time")?
+            .and_then(|v| v.extract::<f64>().ok());
         let result = status.get_item("result")?.map(|v| v.into());
-        let error = status.get_item("error")?.and_then(|v| v.extract::<String>().ok());
-        let worker_id = status.get_item("worker_id")?.and_then(|v| v.extract::<String>().ok());
+        let error = status
+            .get_item("error")?
+            .and_then(|v| v.extract::<String>().ok());
+        let worker_id = status
+            .get_item("worker_id")?
+            .and_then(|v| v.extract::<String>().ok());
         let task_id_owned = task_id.to_string();
         let is_completed = status_opt.as_deref() == Some("completed");
         let is_failed = status_opt.as_deref() == Some("failed");
@@ -145,6 +175,7 @@ impl PyShardedTaskStatus {
     ///     start_time: 开始时间
     ///     end_time: 结束时间
     ///     worker_id: 工作ID
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (task_id, status, submit_time=None, start_time=None, end_time=None, worker_id=None))]
     fn update_status_fast(
         &self,
@@ -193,27 +224,56 @@ impl PyShardedTaskStatus {
     ///
     /// Returns:
     ///     成功更新的数量
+    #[allow(clippy::type_complexity)]
     fn update_status_fast_batch(
         &self,
         py: Python,
-        items: Vec<(String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>)>,
+        items: Vec<(
+            String,
+            String,
+            Option<f64>,
+            Option<f64>,
+            Option<f64>,
+            Option<String>,
+        )>,
     ) -> PyResult<usize> {
         // 阶段 1: 计算分片索引（在 GIL 下）
-        let mut extracted_items = Vec::with_capacity(items.len());
+        let mut extracted_items: Vec<BatchUpdateItem> = Vec::with_capacity(items.len());
 
         for (task_id, status, submit_time, start_time, end_time, worker_id) in items {
             let shard_idx = self._get_shard_index(&task_id);
             let is_completed = status == "completed";
             let is_failed = status == "failed";
 
-            extracted_items.push((task_id, status, submit_time, start_time, end_time, worker_id, shard_idx, is_completed, is_failed));
+            extracted_items.push((
+                task_id,
+                status,
+                submit_time,
+                start_time,
+                end_time,
+                worker_id,
+                shard_idx,
+                is_completed,
+                is_failed,
+            ));
         }
 
         // 阶段 2: 释放 GIL 后执行批量 Rust 操作
         py.allow_threads(|| {
             let mut count = 0;
 
-            for (task_id, status, submit_time, start_time, end_time, worker_id, shard_idx, is_completed, is_failed) in extracted_items {
+            for (
+                task_id,
+                status,
+                submit_time,
+                start_time,
+                end_time,
+                worker_id,
+                shard_idx,
+                is_completed,
+                is_failed,
+            ) in extracted_items
+            {
                 let shard = &self.shards[shard_idx];
 
                 let task_status = TaskStatusDict {
@@ -274,7 +334,7 @@ impl PyShardedTaskStatus {
                 let shard = &self.shards[shard_idx];
                 let mut heap = self.expiry_heaps[shard_idx].write();
 
-                while let Some(&(expiry_time, ref task_id)) = heap.peek() {
+                while let Some(&(expiry_time, ref _task_id)) = heap.peek() {
                     if let Some(limit) = max_cleanup {
                         if cleaned_count >= limit {
                             break;
@@ -323,6 +383,7 @@ impl PyShardedTaskStatus {
     ///
     /// Returns:
     ///     任务状态列表（与输入顺序相同，不存在的任务对应位置为 None）
+    #[allow(deprecated)]
     fn get_status_batch(&self, py: Python, task_ids: Vec<String>) -> PyResult<PyObject> {
         let results: PyResult<Vec<PyObject>> = task_ids
             .into_iter()
@@ -347,26 +408,44 @@ impl PyShardedTaskStatus {
             let status_dict = status_obj.extract::<Bound<'_, PyDict>>(py);
             if let Ok(dict) = status_dict {
                 // 提取所有字段
-                let status_opt = dict.get_item("status")?.and_then(|v| v.extract::<String>().ok());
-                let submit_time = dict.get_item("submit_time")?.and_then(|v| v.extract::<f64>().ok());
-                let start_time = dict.get_item("start_time")?.and_then(|v| v.extract::<f64>().ok());
-                let end_time = dict.get_item("end_time")?.and_then(|v| v.extract::<f64>().ok());
+                let status_opt = dict
+                    .get_item("status")?
+                    .and_then(|v| v.extract::<String>().ok());
+                let submit_time = dict
+                    .get_item("submit_time")?
+                    .and_then(|v| v.extract::<f64>().ok());
+                let start_time = dict
+                    .get_item("start_time")?
+                    .and_then(|v| v.extract::<f64>().ok());
+                let end_time = dict
+                    .get_item("end_time")?
+                    .and_then(|v| v.extract::<f64>().ok());
                 let result = dict.get_item("result")?.map(|v| v.into());
-                let error = dict.get_item("error")?.and_then(|v| v.extract::<String>().ok());
-                let worker_id = dict.get_item("worker_id")?.and_then(|v| v.extract::<String>().ok());
+                let error = dict
+                    .get_item("error")?
+                    .and_then(|v| v.extract::<String>().ok());
+                let worker_id = dict
+                    .get_item("worker_id")?
+                    .and_then(|v| v.extract::<String>().ok());
                 let is_completed = status_opt.as_deref() == Some("completed");
                 let is_failed = status_opt.as_deref() == Some("failed");
                 let shard_idx = self._get_shard_index(&task_id);
 
-                extracted_items.push((task_id, TaskStatusDict {
-                    status: status_opt,
-                    submit_time,
-                    start_time,
-                    end_time,
-                    result,
-                    error,
-                    worker_id,
-                }, shard_idx, is_completed, is_failed));
+                extracted_items.push((
+                    task_id,
+                    TaskStatusDict {
+                        status: status_opt,
+                        submit_time,
+                        start_time,
+                        end_time,
+                        result,
+                        error,
+                        worker_id,
+                    },
+                    shard_idx,
+                    is_completed,
+                    is_failed,
+                ));
             }
         }
 

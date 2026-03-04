@@ -237,9 +237,7 @@ class TaskResourceManager:
                     try:
                         self._resources[resource_id].cleanup()
                     except Exception as e:
-                        self.logger.warning(
-                            f"资源清理失败 [{resource_id}]: {e}"
-                        )
+                        self.logger.warning(f"资源清理失败 [{resource_id}]: {e}")
 
                     del self._resources[resource_id]
                     cleaned_count += 1
@@ -293,18 +291,14 @@ class TaskResourceManager:
 
         with self._lock:
             expired_resources = [
-                (rid, r)
-                for rid, r in self._resources.items()
-                if now - r.last_used > 3600
+                (rid, r) for rid, r in self._resources.items() if now - r.last_used > 3600
             ]
 
             for resource_id, resource in expired_resources[:100]:
                 try:
                     resource.cleanup()
                 except Exception as e:
-                    self.logger.warning(
-                        f"资源清理失败 [{resource_id}]: {e}"
-                    )
+                    self.logger.warning(f"资源清理失败 [{resource_id}]: {e}")
 
                 del self._resources[resource_id]
                 cleaned_count += 1

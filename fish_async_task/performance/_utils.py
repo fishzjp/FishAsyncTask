@@ -37,8 +37,8 @@ def compute_shard_index(task_id: str, shard_count: int) -> int:
     if shard_count < 1:
         raise ValueError(f"shard_count 必须 >= 1，当前值: {shard_count}")
 
-    # 使用 MD5 哈希确保均匀分布
-    hash_bytes = hashlib.md5(task_id.encode()).digest()
+    # 使用 MD5 哈希确保均匀分布（非安全用途，仅用于分片计算）
+    hash_bytes = hashlib.md5(task_id.encode(), usedforsecurity=False).digest()
     # 取前 4 字节转换为整数
     hash_int = int.from_bytes(hash_bytes[:4], byteorder="big")
     # 对分片数量取模
