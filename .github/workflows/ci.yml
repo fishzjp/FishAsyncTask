@@ -46,8 +46,8 @@ jobs:
           .venv
           ~/.cargo/registry
           ~/.cargo/git
-          fish_async_task_core/target
-        key: ${{ runner.os }}-uv-rust-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock', 'fish_async_task_core/Cargo.toml', 'fish_async_task_core/Cargo.lock') }}
+          target
+        key: ${{ runner.os }}-uv-rust-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock', 'Cargo.toml', 'Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-uv-rust-${{ matrix.python-version }}-
           ${{ runner.os }}-uv-rust-

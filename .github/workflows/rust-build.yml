@@ -121,12 +121,10 @@ jobs:
         components: rustfmt, clippy
 
     - name: Check formatting
-      working-directory: ./fish_async_task_core
       run: |
         cargo fmt --all -- --check
 
     - name: Run Clippy
-      working-directory: ./fish_async_task_core
       run: |
         cargo clippy --all-targets --all-features -- -D warnings
 
@@ -145,7 +143,6 @@ jobs:
         cargo install cargo-audit
 
     - name: Run audit
-      working-directory: ./fish_async_task_core
       run: |
         cargo audit
       continue-on-error: true
