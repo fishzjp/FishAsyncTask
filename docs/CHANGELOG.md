@@ -5,15 +5,17 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.3.0] - 2026-03-04 - Rust 扩展正式发布版本
+## [0.3.0] - 2026-03-04 - Rust 核心实现正式版
 
 ### 🚀 核心功能
 
-#### Rust 扩展模块 (`fish_async_task._core`)
-- ✨ Rust 实现的核心状态存储引擎
+#### Rust 核心实现（默认）
+- ✨ **默认采用 Rust 核心实现**，安装即用
+- ✨ 状态存储和优先级队列使用 Rust 实现
 - ✨ 支持 ABI3 编译，兼容 Python 3.9+
 - ✨ 高性能原子操作，无 GIL 竞争
 - ✨ 批量 API 支持，大幅提升吞吐量
+- ✨ 自动回退机制：Rust 不可用时使用纯 Python 实现
 
 #### 性能提升
 - 状态存储性能: **1.08x - 1.63x** 加速

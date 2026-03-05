@@ -1,0 +1,7 @@
+# Sphinx build directory
+build/
+source/_autosummary/
+
+# Sphinx auto-generated files
+*.pyc
+__pycache__/
