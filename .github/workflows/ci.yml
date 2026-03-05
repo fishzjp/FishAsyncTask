@@ -66,7 +66,12 @@ jobs:
         else
           source .venv/bin/activate
         fi
-        pip install maturin[patchelf]
+        # patchelf 只在 Linux 上需要
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          pip install maturin[patchelf]
+        else
+          pip install maturin
+        fi
         pip install -e ".[dev,performance]"
 
     - name: Build Rust extension
