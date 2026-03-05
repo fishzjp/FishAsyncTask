@@ -40,6 +40,11 @@ impl TaskStatus {
 /// 任务状态字典
 ///
 /// 对应 Python 的 TaskStatusDict TypedDict
+///
+/// 优化说明：
+/// - 保留 PyObject 用于 result 字段
+/// - 添加批量 API 减少跨语言调用
+/// - 添加日志记录
 #[derive(Debug, FromPyObject)]
 pub struct TaskStatusDict {
     pub status: Option<String>,
