@@ -21,6 +21,17 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install maturin
+      run: pip install maturin[patchelf]
+
+    - name: Build Rust extension
+      run: |
+        cd fish_async_task_core
+        maturin develop --release
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip

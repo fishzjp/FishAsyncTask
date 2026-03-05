@@ -33,6 +33,17 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        run: pip install maturin[patchelf]
+
+      - name: Build Rust extension
+        run: |
+          cd fish_async_task_core
+          maturin develop --release
+
       - name: Install Sphinx dependencies
         run: |
           pip install -r docs/sphinx/requirements.txt
