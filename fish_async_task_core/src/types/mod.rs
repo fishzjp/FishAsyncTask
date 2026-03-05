@@ -56,6 +56,23 @@ pub struct TaskStatusDict {
     pub worker_id: Option<String>,
 }
 
+// 由于 PyObject 不实现 Clone，我们需要手动实现 Clone
+// 注意：克隆时会丢失 result 字段（包含 PyObject），这通常是可以接受的，
+// 因为在清理和调整分片等场景中，我们不需要 result 字段
+impl Clone for TaskStatusDict {
+    fn clone(&self) -> Self {
+        Self {
+            status: self.status.clone(),
+            submit_time: self.submit_time,
+            start_time: self.start_time,
+            end_time: self.end_time,
+            result: None,  // PyObject 无法安全克隆，设为 None
+            error: self.error.clone(),
+            worker_id: self.worker_id.clone(),
+        }
+    }
+}
+
 /// 优先级任务
 ///
 /// 用于优先级队列的任务包装（不存储 PyObject，避免 Clone 问题）

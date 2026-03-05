@@ -1045,8 +1045,11 @@ class TaskStatusManager:
             else:
                 shard_count = self.DEFAULT_SHARD_COUNT
 
-        # 使用分片存储
-        self.sharded_status = ShardedTaskStatusWithExpiry(shard_count, task_status_ttl)
+        # 使用分片存储（通过适配器优先使用 Rust 实现）
+        # 使用延迟导入避免循环导入
+        from ._adapters import get_sharded_status_store
+
+        self.sharded_status = get_sharded_status_store(shard_count, task_status_ttl)
 
         # 批量更新配置
         self._batch_size = batch_size if batch_size is not None else self.DEFAULT_BATCH_SIZE

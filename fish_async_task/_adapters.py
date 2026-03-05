@@ -65,7 +65,7 @@ class ShardedTaskStatusAdapter:
         """获取任务状态"""
         raise NotImplementedError
 
-    def update_status(self, task_id: str, status: TaskStatusDict) -> None:
+    def update_status(self, task_id: str, status: TaskStatusDict, current_status: Optional[TaskStatusDict] = None) -> None:
         """更新任务状态"""
         raise NotImplementedError
 
@@ -85,6 +85,19 @@ class ShardedTaskStatusAdapter:
         """清空所有任务状态"""
         raise NotImplementedError
 
+    def enforce_max_count(self, max_count: int) -> int:
+        """强制执行最大任务数量限制"""
+        raise NotImplementedError
+
+    def resize_shards(self, new_shard_count: int) -> bool:
+        """动态调整分片数量"""
+        raise NotImplementedError
+
+    @property
+    def shard_count(self) -> int:
+        """获取当前分片数量"""
+        raise NotImplementedError
+
 
 class _RustShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
     """Rust 实现适配器"""
@@ -96,9 +109,10 @@ class _RustShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
         # Rust 直接返回正确格式的字典，无需二次转换
         return self._rust.get_status(task_id)
 
-    def update_status(self, task_id: str, status: TaskStatusDict) -> None:
+    def update_status(self, task_id: str, status: TaskStatusDict, current_status: Optional[TaskStatusDict] = None) -> None:
         # 当需要 result 或 error 字段时，使用完整 update_status 方法
         # 其他情况使用高性能 update_status_fast 方法
+        # current_status 参数被忽略（Rust 实现内部处理状态合并）
         if "result" in status or "error" in status:
             # 使用字典方式更新以支持 result 和 error
             self._rust.update_status(task_id, status)
@@ -117,6 +131,7 @@ class _RustShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
         return self._rust.remove_status(task_id)
 
     def cleanup_expired(self, max_cleanup: Optional[int] = None) -> int:
+        """清理过期任务"""
         return self._rust.cleanup_expired(max_cleanup)
 
     def get_total_count(self) -> int:
@@ -124,6 +139,21 @@ class _RustShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
 
     def clear_all(self) -> None:
         self._rust.clear_all()
+
+    def enforce_max_count(self, max_count: int) -> int:
+        """强制执行最大任务数量限制"""
+        return self._rust.enforce_max_count(max_count)
+
+    def resize_shards(self, new_shard_count: int) -> bool:
+        """动态调整分片数量"""
+        # Rust 实现不支持动态调整分片数量（需要重新创建实例）
+        # 调用 Rust 方法会返回 false
+        return self._rust.resize_shards(new_shard_count)
+
+    @property
+    def shard_count(self) -> int:
+        """获取当前分片数量"""
+        return self._rust.get_shard_count()
 
 
 class _PythonShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
@@ -135,8 +165,8 @@ class _PythonShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
     def get_status(self, task_id: str) -> Optional[TaskStatusDict]:
         return self._inner.get_status(task_id)
 
-    def update_status(self, task_id: str, status: TaskStatusDict) -> None:
-        self._inner.update_status(task_id, status)
+    def update_status(self, task_id: str, status: TaskStatusDict, current_status: Optional[TaskStatusDict] = None) -> None:
+        self._inner.update_status(task_id, status, current_status)
 
     def remove_status(self, task_id: str) -> bool:
         return self._inner.remove_status(task_id)
@@ -149,6 +179,19 @@ class _PythonShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
 
     def clear_all(self) -> None:
         self._inner.clear_all()
+
+    def enforce_max_count(self, max_count: int) -> int:
+        """强制执行最大任务数量限制"""
+        return self._inner.enforce_max_count(max_count)
+
+    def resize_shards(self, new_shard_count: int) -> bool:
+        """动态调整分片数量"""
+        return self._inner.resize_shards(new_shard_count)
+
+    @property
+    def shard_count(self) -> int:
+        """获取当前分片数量"""
+        return self._inner.shard_count
 
 
 class PriorityTaskQueueAdapter:
