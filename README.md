@@ -101,7 +101,7 @@ from fish_async_task._rust import is_rust_available
 print(f"Rust 核心已启用: {is_rust_available()}")  # 应该输出 True
 ```
 
-> 📖 详细文档请访问: https://fishasynctask.readthedocs.io/zh-cn/latest/index.html
+> 📖 详细文档请访问: **https://fishzjp.github.io/FishAsyncTask/**
 
 ## 快速开始
 
@@ -181,7 +181,7 @@ task_manager.submit_task(low_priority_task, priority=10)
 
 ## 文档
 
-完整文档请访问: **https://fishasynctask.readthedocs.io/zh-cn/latest/index.html**
+完整文档请访问: **https://fishzjp.github.io/FishAsyncTask/**
 
 包括：
 - 📖 快速开始指南

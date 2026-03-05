@@ -31,7 +31,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/fishzjp/FishAsyncTask"
-Documentation = "https://fishasynctask.readthedocs.io/zh-cn/latest/"
+Documentation = "https://fishzjp.github.io/FishAsyncTask/"
 Repository = "https://github.com/fishzjp/FishAsyncTask"
 Issues = "https://github.com/fishzjp/FishAsyncTask/issues"
 
@@ -85,6 +85,9 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 filterwarnings = [
     "ignore::pytest.PytestReturnNotNoneWarning",
+]
+markers = [
+    "smoke: 冒烟测试，快速验证核心功能",
 ]
 
 [tool.mypy]
