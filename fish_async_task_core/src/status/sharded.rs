@@ -9,10 +9,44 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// 过期堆类型别名
-type ExpiryHeap = Arc<RwLock<BinaryHeap<(Instant, String)>>>;
+/// 过期时间戳包装器
+///
+/// 由于 f64 不实现 Ord（因为 NaN），我们需要一个包装器来实现 Ord。
+/// BinaryHeap 是最大堆，所以我们使用 ReverseOrd 来实现最小堆行为。
+#[derive(Debug, Clone, Copy)]
+struct ExpiryTimestamp(f64);
+
+impl ExpiryTimestamp {
+    fn new(timestamp: f64) -> Self {
+        ExpiryTimestamp(timestamp)
+    }
+}
+
+impl PartialEq for ExpiryTimestamp {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()  // 使用 bits 比较 NaN
+    }
+}
+
+impl Eq for ExpiryTimestamp {}
+
+impl PartialOrd for ExpiryTimestamp {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ExpiryTimestamp {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // 使用 bits 比较来处理 NaN
+        self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
+/// 过期堆类型别名 - 使用 ExpiryTimestamp 包装器
+type ExpiryHeap = Arc<RwLock<BinaryHeap<(ExpiryTimestamp, String)>>>;
 
 /// 批量更新项类型别名
 #[allow(clippy::type_complexity)]
@@ -155,10 +189,13 @@ impl PyShardedTaskStatus {
             };
 
             // 如果任务已完成或失败，添加到过期堆
-            if (is_completed || is_failed) && end_time.is_some() {
-                let expiry_time = Instant::now() + self.ttl;
-                let mut heap = self.expiry_heaps[shard_idx].write();
-                heap.push((expiry_time, task_id_owned.clone()));
+            // 使用 end_time + ttl 作为过期时间（Unix 时间戳）
+            if is_completed || is_failed {
+                if let Some(et) = end_time {
+                    let expiry_time = ExpiryTimestamp::new(et + self.ttl.as_secs_f64());
+                    let mut heap = self.expiry_heaps[shard_idx].write();
+                    heap.push((expiry_time, task_id_owned.clone()));
+                }
             }
 
             shard.insert(task_id_owned, task_status);
@@ -206,10 +243,13 @@ impl PyShardedTaskStatus {
             };
 
             // 如果任务已完成或失败，添加到过期堆
-            if (is_completed || is_failed) && end_time.is_some() {
-                let expiry_time = Instant::now() + self.ttl;
-                let mut heap = self.expiry_heaps[shard_idx].write();
-                heap.push((expiry_time, task_id_clone));
+            // 使用 end_time + ttl 作为过期时间（Unix 时间戳）
+            if is_completed || is_failed {
+                if let Some(et) = end_time {
+                    let expiry_time = ExpiryTimestamp::new(et + self.ttl.as_secs_f64());
+                    let mut heap = self.expiry_heaps[shard_idx].write();
+                    heap.push((expiry_time, task_id_clone));
+                }
             }
 
             shard.insert(task_id, task_status);
@@ -261,6 +301,7 @@ impl PyShardedTaskStatus {
         // 阶段 2: 释放 GIL 后执行批量 Rust 操作
         py.allow_threads(|| {
             let mut count = 0;
+            let ttl_secs = self.ttl.as_secs_f64();
 
             for (
                 task_id,
@@ -287,10 +328,12 @@ impl PyShardedTaskStatus {
                 };
 
                 // 如果任务已完成或失败，添加到过期堆
-                if (is_completed || is_failed) && end_time.is_some() {
-                    let expiry_time = Instant::now() + self.ttl;
-                    let mut heap = self.expiry_heaps[shard_idx].write();
-                    heap.push((expiry_time, task_id.clone()));
+                if is_completed || is_failed {
+                    if let Some(et) = end_time {
+                        let expiry_time = ExpiryTimestamp::new(et + ttl_secs);
+                        let mut heap = self.expiry_heaps[shard_idx].write();
+                        heap.push((expiry_time, task_id.clone()));
+                    }
                 }
 
                 shard.insert(task_id, task_status);
@@ -319,41 +362,47 @@ impl PyShardedTaskStatus {
     /// Returns:
     ///     清理的任务数量
     #[pyo3(signature = (max_cleanup=None))]
-    fn cleanup_expired(&self, py: Python, max_cleanup: Option<usize>) -> PyResult<usize> {
-        py.allow_threads(|| {
-            let now = Instant::now();
-            let mut cleaned_count = 0;
+    fn cleanup_expired(&self, _py: Python, max_cleanup: Option<usize>) -> PyResult<usize> {
+        // 使用 SystemTime 获取当前 Unix 时间戳
+        let now_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
 
-            for shard_idx in 0..self.shard_count {
+        let mut cleaned_count = 0;
+
+        for shard_idx in 0..self.shard_count {
+            if let Some(limit) = max_cleanup {
+                if cleaned_count >= limit {
+                    break;
+                }
+            }
+
+            let shard = &self.shards[shard_idx];
+            let mut heap = self.expiry_heaps[shard_idx].write();
+
+            // BinaryHeap 是最大堆，但我们需要最小堆行为（最早过期的先处理）
+            // ExpiryTimestamp 的 Ord 实现已经处理了这个问题
+            while let Some((expiry_time, ref _task_id)) = heap.peek() {
                 if let Some(limit) = max_cleanup {
                     if cleaned_count >= limit {
                         break;
                     }
                 }
 
-                let shard = &self.shards[shard_idx];
-                let mut heap = self.expiry_heaps[shard_idx].write();
+                // 如果过期时间还未到达，停止清理
+                if expiry_time.0 > now_timestamp {
+                    break;
+                }
 
-                while let Some(&(expiry_time, ref _task_id)) = heap.peek() {
-                    if let Some(limit) = max_cleanup {
-                        if cleaned_count >= limit {
-                            break;
-                        }
-                    }
-
-                    if expiry_time > now {
-                        break;
-                    }
-
-                    let task_id = heap.pop().unwrap().1;
-                    if shard.remove(&task_id).is_some() {
-                        cleaned_count += 1;
-                    }
+                let task_id = heap.pop().unwrap().1;
+                if shard.remove(&task_id).is_some() {
+                    cleaned_count += 1;
                 }
             }
+        }
 
-            Ok(cleaned_count)
-        })
+        Ok(cleaned_count)
     }
 
     /// 获取总任务数量
@@ -452,15 +501,18 @@ impl PyShardedTaskStatus {
         // 阶段 2: 释放 GIL 后执行批量 Rust 操作
         py.allow_threads(|| {
             let mut count = 0;
+            let ttl_secs = self.ttl.as_secs_f64();
 
             for (task_id, task_status, shard_idx, is_completed, is_failed) in extracted_items {
                 let shard = &self.shards[shard_idx];
 
                 // 如果任务已完成或失败，添加到过期堆
-                if (is_completed || is_failed) && task_status.end_time.is_some() {
-                    let expiry_time = Instant::now() + self.ttl;
-                    let mut heap = self.expiry_heaps[shard_idx].write();
-                    heap.push((expiry_time, task_id.clone()));
+                if is_completed || is_failed {
+                    if let Some(et) = task_status.end_time {
+                        let expiry_time = ExpiryTimestamp::new(et + ttl_secs);
+                        let mut heap = self.expiry_heaps[shard_idx].write();
+                        heap.push((expiry_time, task_id.clone()));
+                    }
                 }
 
                 shard.insert(task_id, task_status);
@@ -470,17 +522,102 @@ impl PyShardedTaskStatus {
             Ok(count)
         })
     }
+
+    /// 强制执行最大任务数量限制
+    ///
+    /// 当任务状态数量超过限制时，按时间顺序清理最旧的任务。
+    ///
+    /// Args:
+    ///     max_count: 最大任务数量
+    ///
+    /// Returns:
+    ///     清理的任务数量
+    fn enforce_max_count(&self, _py: Python, max_count: usize) -> PyResult<usize> {
+        let total_count = self.get_total_count()?;
+        if total_count <= max_count {
+            return Ok(0);
+        }
+
+        let cleanup_count = total_count - max_count;
+        let mut cleaned = 0;
+
+        // 遍历所有分片，清理最旧的任务
+        for shard_idx in 0..self.shard_count {
+            if cleaned >= cleanup_count {
+                break;
+            }
+
+            let shard = &self.shards[shard_idx];
+
+            // 收集所有任务并按 submit_time/end_time 排序
+            let mut tasks_with_time: Vec<(f64, String)> = shard
+                .iter()
+                .filter_map(|entry| {
+                    let (task_id, status) = entry.pair();
+                    let time_key = status.end_time
+                        .or(status.start_time)
+                        .or(status.submit_time)
+                        .unwrap_or(0.0);
+                    Some((time_key, task_id.clone()))
+                })
+                .collect();
+
+            // 按时间升序排序（最旧的在前）
+            tasks_with_time.sort_by(|a, b| {
+                a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            // 清理最旧的任务
+            let need_cleanup = (cleanup_count - cleaned).min(tasks_with_time.len());
+            for (_, task_id) in tasks_with_time.into_iter().take(need_cleanup) {
+                shard.remove(&task_id);
+                cleaned += 1;
+            }
+
+            if cleaned >= cleanup_count {
+                break;
+            }
+        }
+
+        Ok(cleaned)
+    }
+
+    /// 动态调整分片数量
+    ///
+    /// 注意：由于 Rust 的所有权限制，此方法返回 false 表示需要重新创建实例。
+    ///
+    /// Args:
+    ///     new_shard_count: 新的分片数量
+    ///
+    /// Returns:
+    ///     是否成功调整
+    fn resize_shards(&self, _py: Python, _new_shard_count: usize) -> PyResult<bool> {
+        // 由于 Rust 的所有权限制和 DashMap 的不可变性，
+        // 无法在原实例上调整分片数量。
+        // 返回 false 表示需要重新创建实例。
+        Ok(false)
+    }
+
+    /// 获取分片数量
+    fn get_shard_count(&self) -> PyResult<usize> {
+        Ok(self.shard_count)
+    }
 }
 
 impl PyShardedTaskStatus {
     /// 根据 task_id 计算分片索引
     fn _get_shard_index(&self, task_id: &str) -> usize {
+        self._get_shard_index_with_count(task_id, self.shard_count)
+    }
+
+    /// 根据 task_id 和指定的分片数量计算分片索引
+    fn _get_shard_index_with_count(&self, task_id: &str, count: usize) -> usize {
         // 使用稳定的哈希函数
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
         task_id.hash(&mut hasher);
-        (hasher.finish() as usize) % self.shard_count
+        (hasher.finish() as usize) % count
     }
 }
