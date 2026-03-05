@@ -6,21 +6,6 @@ formats:
   - pdf
   - htmlzip
 
-# Python 环境配置
-python:
-  version: "3.11"
-  install:
-    - method: pip
-      path: .
-      extra_requirements:
-        - dev
-    - requirements: docs/sphinx/requirements.txt
-
-# Sphinx 配置
-sphinx:
-  configuration: docs/sphinx/source/conf.py
-  fail_on_warning: false
-
 # 构建配置
 build:
   os: ubuntu-22.04
@@ -31,5 +16,11 @@ build:
       # 确保获取完整历史记录，用于版本切换
       - git fetch --unshallow || true
     post_install:
-      # 构建时安装项目
+      # 安装项目依赖
       - pip install -e .
+      - pip install -r docs/sphinx/requirements.txt
+
+# Sphinx 配置
+sphinx:
+  configuration: docs/sphinx/source/conf.py
+  fail_on_warning: false
