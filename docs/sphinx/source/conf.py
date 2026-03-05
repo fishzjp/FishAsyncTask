@@ -86,6 +86,7 @@ html_theme_options = {
     "source_repository": "https://github.com/fishzjp/FishAsyncTask",
     "source_branch": "main",
     "source_directory": "docs/sphinx/source/",
+    "edit_url": "https://github.com/fishzjp/FishAsyncTask/edit/main/docs/sphinx/source/",
 }
 
 # 模板路径
