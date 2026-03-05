@@ -18,15 +18,15 @@ from typing import TYPE_CHECKING
 
 from .adaptive_scaling import AdaptiveWorkerManager
 from .batch_updater import BatchedStatusUpdater
+from .monitoring import PerformanceMetrics, SystemHealthMonitor
 from .priority_cleanup import TaskStatusWithExpiry
 from .priority_queue import (
-    PriorityTaskQueue,
     PriorityTaskManager,
+    PriorityTaskQueue,
     TaskDependencyManager,
 )
 from .resource_manager import TaskResourceManager, TimeoutTaskTracker
 from .sharded_status import ShardedTaskStatus
-from .monitoring import PerformanceMetrics, SystemHealthMonitor
 
 __all__ = [
     "ShardedTaskStatus",

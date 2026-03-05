@@ -139,14 +139,16 @@ def create_task_statuses(count: int, base_time: Optional[float] = None) -> List[
 
     statuses = []
     for i in range(count):
-        statuses.append({
-            "task_id": f"task-{i}",
-            "status": "completed",
-            "submit_time": base_time,
-            "start_time": base_time + 0.1,
-            "end_time": base_time + 0.2,
-            "result": f"result-{i}",
-        })
+        statuses.append(
+            {
+                "task_id": f"task-{i}",
+                "status": "completed",
+                "submit_time": base_time,
+                "start_time": base_time + 0.1,
+                "end_time": base_time + 0.2,
+                "result": f"result-{i}",
+            }
+        )
 
     return statuses
 
@@ -171,10 +173,12 @@ def assert_performance_meets_threshold(
         AssertionError: 如果性能值不满足阈值
     """
     if comparison == "min":
-        assert actual_value >= threshold, \
-            f"{metric_name} 不满足要求: 实际值 {actual_value:.2f} < 阈值 {threshold:.2f}"
+        assert (
+            actual_value >= threshold
+        ), f"{metric_name} 不满足要求: 实际值 {actual_value:.2f} < 阈值 {threshold:.2f}"
     elif comparison == "max":
-        assert actual_value <= threshold, \
-            f"{metric_name} 不满足要求: 实际值 {actual_value:.2f} > 阈值 {threshold:.2f}"
+        assert (
+            actual_value <= threshold
+        ), f"{metric_name} 不满足要求: 实际值 {actual_value:.2f} > 阈值 {threshold:.2f}"
     else:
         raise ValueError(f"无效的比较类型: {comparison}，必须是 'min' 或 'max'")

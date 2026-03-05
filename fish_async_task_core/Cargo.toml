@@ -1,0 +1,23 @@
+[package]
+name = "fish-async-task-core"
+version = "0.3.0"
+edition = "2021"
+description = "Rust core implementation for FishAsyncTask"
+authors = ["fishzjp"]
+license = "MIT"
+repository = "https://github.com/fishzjp/FishAsyncTask"
+
+[lib]
+name = "fish_async_task_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }
+rayon = "1.10"
+parking_lot = "0.12"
+dashmap = "6.1"
+crossbeam-channel = "0.5"
+petgraph = "0.6"
+
+[dev-dependencies]
+criterion = "0.5"

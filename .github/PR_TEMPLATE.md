@@ -19,7 +19,6 @@
   - 添加类级别类型声明(`TaskManager._instance_key`, `WorkerManager._adaptive_manager`)
   - 修复泛型类型(`Deque[float]`替代`deque`)
   - 正确处理`Optional`类型避免None值运算
-  - 配置mypy忽略Cython编译扩展模块
   - **结果**: mypy静态检查100%通过
 
 #### 代码格式化
@@ -153,7 +152,6 @@ fish_async_task/types.py
 fish_async_task/performance/adaptive_scaling.py
 fish_async_task/performance/priority_cleanup.py
 fish_async_task/performance/_utils.py
-fish_async_task/_cython/__init__.py
 ```
 
 ### 新增的文件 (7个)

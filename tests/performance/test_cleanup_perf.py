@@ -89,11 +89,14 @@ class TestCleanupPerformanceBenchmark:
         print(f"全量扫描: {full_scan_time:.2f}ms")
         print(f"优先级队列: {priority_time:.2f}ms")
         print(f"性能提升: {full_scan_time / priority_time:.1f}x")
-        print(f"时间节省: {full_scan_time - priority_time:.2f}ms ({(1 - priority_time / full_scan_time) * 100:.1f}%)")
+        print(
+            f"时间节省: {full_scan_time - priority_time:.2f}ms ({(1 - priority_time / full_scan_time) * 100:.1f}%)"
+        )
 
         # 验证优先级队列更快（至少快 2 倍，或在 50ms 内完成）
-        assert priority_time < full_scan_time / 2 or priority_time < 50, \
-            f"优先级队列性能不足: {priority_time:.2f}ms vs {full_scan_time:.2f}ms"
+        assert (
+            priority_time < full_scan_time / 2 or priority_time < 50
+        ), f"优先级队列性能不足: {priority_time:.2f}ms vs {full_scan_time:.2f}ms"
 
     def test_cleanup_incremental_performance(self):
         """测试增量清理性能"""

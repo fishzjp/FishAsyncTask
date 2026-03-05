@@ -27,7 +27,6 @@ FishAsyncTask v0.2.1 是一个**代码质量改进版本**,专注于提升项目
 - ✅ 添加类级别类型声明(`TaskManager._instance_key`, `WorkerManager._adaptive_manager`)
 - ✅ 修复泛型类型(使用`Deque[float]`替代`deque`)
 - ✅ 正确处理`Optional`类型避免None值运算
-- ✅ 配置mypy忽略Cython编译扩展模块
 
 **结果**:
 - mypy静态检查**100%通过** ✅

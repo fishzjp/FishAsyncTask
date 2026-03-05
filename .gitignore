@@ -67,3 +67,18 @@ Thumbs.db
 # Reports
 docs/PERFORMANCE_COMPARISON_REPORT.md
 benchmark_report.json
+
+# Rust
+fish_async_task_core/target/
+**/target/
+*.rlib
+*.dylib
+*.dll
+*.exe
+Cargo.lock
+
+# Performance baseline generated files
+tests/performance/rust_baseline/*.txt
+tests/performance/rust_baseline/*.html
+tests/performance/rust_baseline/workload_*_tasks.py
+!tests/performance/rust_baseline/baseline_summary.md

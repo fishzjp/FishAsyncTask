@@ -1,7 +1,6 @@
 interrogate:
   # 忽略的模块
   ignore:
-    - setup_cython
     - tests/*
     - */tests/*
 

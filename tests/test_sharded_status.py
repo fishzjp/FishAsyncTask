@@ -56,9 +56,7 @@ class TestShardedTaskStatus:
         # 验证没有分片超过平均值的 2 倍（简单的均匀性检查）
         avg_count = 1000 / 16
         for count in shard_counts:
-            assert (
-                count < avg_count * 2
-            ), f"分片分布不均匀：存在热点分片（{count} 个任务）"
+            assert count < avg_count * 2, f"分片分布不均匀：存在热点分片（{count} 个任务）"
 
     def test_get_status_empty(self):
         """测试查询不存在的任务状态"""
@@ -504,4 +502,3 @@ def test_state_transition_atomicity():
     final_status = store.get_status(task_id)
     assert final_status is not None
     assert final_status["status"] == "completed"
-

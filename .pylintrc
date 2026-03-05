@@ -1,0 +1,71 @@
+[MASTER]
+# 使用多个并行作业加速检查
+jobs=1
+
+# 设置 Python 解释器路径
+# interpreter=python3
+
+[MESSAGES CONTROL]
+# 禁用一些过于严格的检查
+disable=
+    C0111,  # 缺少文档字符串 (由 interrogate 处理)
+    C0103,  # 无效名称 (允许下划线开头)
+    R0903,  # 类的公共方法太少
+    R0913,  # 参数过多
+    R0914,  # 返回变量过多
+    W0212,  # 访问受保护成员
+    W0143,  # 使用 iter/next 而不是循环
+    W1203,  # 在类中使用默认参数
+    C0302,  # 行太长 (由 black 处理)
+    C0303,  # 尾部空格 (由 black 处理)
+    C0326,  # 运算符周围空格 (由 black 处理)
+    C0330,  # 关键字周围空格 (由 black 处理)
+    W0311,  # 缩进不正确 (由 black 处理)
+    R0912,  # 分支过多
+    R0915,  # 语句过多
+    W0211,  # 访问私有方法
+    C0415,  # import 顺序 (由 isort 处理)
+    W0611,  # 未使用的导入 (由 isort/black 处理)
+    W0612,  # 未使用的变量
+    C0414,  # 通配符导入
+
+[FORMAT]
+# 最大行长度 (应该与 black 一致)
+max-line-length=100
+
+# 单行缩进空格数
+indent-string='    '
+
+[BASIC]
+# 好的变量名模式
+good-names=i,j,k,ex,Run,_,id,logger
+
+[DESIGN]
+# 最大参数数量
+max-args=10
+# 最大局部变量
+max-locals=20
+# 最大返回值
+max-returns=10
+# 最大分支数
+max-branches=20
+# 最大语句数
+max-statements=60
+
+[IMPORTS]
+# 允许的导入模块
+deprecated-modules=
+
+[CLASSES]
+# 类属性正则表达式
+class-attribute-naming-style=any
+
+# 方法参数命名风格
+method-argument-naming-style=snake_case
+
+[SIMILARITIES]
+# 禁用相似代码检查
+min-similarity-lines=4
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=no

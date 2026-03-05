@@ -202,9 +202,7 @@ class TestBatchedStatusUpdaterConcurrency:
         def batch_updates(thread_id: int):
             for i in range(updates_per_thread):
                 task_id = f"task-{thread_id}-{i}"
-                updater.queue_update(
-                    task_id, {"status": "running", "thread": thread_id}
-                )
+                updater.queue_update(task_id, {"status": "running", "thread": thread_id})
 
         import threading
 

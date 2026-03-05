@@ -1,10 +1,10 @@
 #!/bin/bash
-# FishAsyncTask v0.2.1 发布到PyPI的脚本
+# FishAsyncTask v0.3.0 发布到PyPI的脚本
 
 set -e
 
 echo "=================================================="
-echo "FishAsyncTask v0.2.1 PyPI发布助手"
+echo "FishAsyncTask v0.3.0 PyPI发布助手"
 echo "=================================================="
 echo ""
 
@@ -20,19 +20,19 @@ echo "✅ 当前分支: $CURRENT_BRANCH"
 echo ""
 
 # 检查标签是否存在
-if ! git rev-parse v0.2.1 >/dev/null 2>&1; then
-    echo "❌ 错误: 标签v0.2.1不存在"
+if ! git rev-parse v0.3.0 >/dev/null 2>&1; then
+    echo "❌ 错误: 标签v0.3.0不存在"
     exit 1
 fi
 
-echo "✅ Git标签: v0.2.1"
+echo "✅ Git标签: v0.3.0"
 echo ""
 
 # 检查是否推送了标签
-TAG_PUSHED=$(git ls-remote --tags origin | grep v0.2.1 || echo "")
+TAG_PUSHED=$(git ls-remote --tags origin | grep v0.3.0 || echo "")
 if [ -z "$TAG_PUSHED" ]; then
-    echo "⚠️  警告: 标签v0.2.1未推送到远程"
-    echo "   请先运行: git push origin v0.2.1"
+    echo "⚠️  警告: 标签v0.3.0未推送到远程"
+    echo "   请先运行: git push origin v0.3.0"
     exit 1
 fi
 
@@ -114,7 +114,7 @@ case $REPLY in
         echo "✅ 发布到TestPyPI成功!"
         echo ""
         echo "测试安装:"
-        echo "  pip install --index-url https://test.pypi.org/simple/ fish-async-task==0.2.1"
+        echo "  pip install --index-url https://test.pypi.org/simple/ fish-async-task==0.3.0"
         ;;
     2)
         echo "=================================================="
@@ -133,7 +133,7 @@ case $REPLY in
             echo "✅ 发布到PyPI成功!"
             echo ""
             echo "安装命令:"
-            echo "  pip install fish-async-task==0.2.1"
+            echo "  pip install fish-async-task==0.3.0"
         else
             echo "❌ 已取消发布"
             exit 0
@@ -149,7 +149,7 @@ case $REPLY in
         echo "✅ TestPyPI发布成功!"
         echo ""
         echo "测试安装:"
-        echo "  pip install --index-url https://test.pypi.org/simple/ fish-async-task==0.2.1"
+        echo "  pip install --index-url https://test.pypi.org/simple/ fish-async-task==0.3.0"
         echo ""
         read -p "测试完成后按回车继续发布到PyPI..." -r
         echo ""
@@ -164,7 +164,7 @@ case $REPLY in
             echo "✅ 发布到PyPI成功!"
             echo ""
             echo "安装命令:"
-            echo "  pip install fish-async-task==0.2.1"
+            echo "  pip install fish-async-task==0.3.0"
         else
             echo "❌ 已取消PyPI发布"
             exit 0
@@ -188,8 +188,8 @@ echo ""
 echo "后续步骤:"
 echo "  1. 访问PyPI验证发布: https://pypi.org/project/fish-async-task/"
 echo "  2. 创建GitHub Release: https://github.com/fishzjp/FishAsyncTask/releases/new"
-echo "     标签: v0.2.1"
-echo "     标题: v0.2.1 - 代码质量改进版本"
-echo "     描述: 使用 .github/RELEASE_NOTES_0.2.1.md"
-echo "  3. 测试安装: pip install fish-async-task==0.2.1"
+echo "     标签: v0.3.0"
+echo "     标题: v0.3.0 - 代码质量改进版本"
+echo "     描述: 使用 .github/RELEASE_NOTES_0.3.0.md"
+echo "  3. 测试安装: pip install fish-async-task==0.3.0"
 echo ""

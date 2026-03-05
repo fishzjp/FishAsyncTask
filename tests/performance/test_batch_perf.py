@@ -21,11 +21,7 @@ class TestBatchThroughputBenchmark:
         目标：5,000+ 任务/秒
         """
         store = {}
-        updater = BatchedStatusUpdater(
-            buffer_size=100,
-            flush_interval=1.0,
-            underlying_store=store
-        )
+        updater = BatchedStatusUpdater(buffer_size=100, flush_interval=1.0, underlying_store=store)
 
         num_tasks = 5000
         start_time = time.time()
@@ -57,11 +53,7 @@ class TestBatchThroughputBenchmark:
         目标：在 10 个线程下，总体吞吐量 10,000+ 任务/秒
         """
         store = {}
-        updater = BatchedStatusUpdater(
-            buffer_size=100,
-            flush_interval=1.0,
-            underlying_store=store
-        )
+        updater = BatchedStatusUpdater(buffer_size=100, flush_interval=1.0, underlying_store=store)
 
         num_threads = 10
         tasks_per_thread = 500
@@ -114,9 +106,7 @@ class TestBatchThroughputBenchmark:
         for buffer_size in buffer_sizes:
             store = {}
             updater = BatchedStatusUpdater(
-                buffer_size=buffer_size,
-                flush_interval=10.0,  # 禁用时间触发
-                underlying_store=store
+                buffer_size=buffer_size, flush_interval=10.0, underlying_store=store  # 禁用时间触发
             )
 
             start_time = time.time()
@@ -140,7 +130,9 @@ class TestBatchThroughputBenchmark:
 
         # 验证所有测试都达到最低吞吐量要求
         for buffer_size, elapsed, throughput in results:
-            assert throughput >= 5000, f"缓冲区大小 {buffer_size} 时，吞吐量 {throughput:.0f} 任务/秒 未达到目标"
+            assert (
+                throughput >= 5000
+            ), f"缓冲区大小 {buffer_size} 时，吞吐量 {throughput:.0f} 任务/秒 未达到目标"
 
     def test_flush_interval_impact(self):
         """测试不同刷新间隔对性能的影响"""
@@ -154,7 +146,7 @@ class TestBatchThroughputBenchmark:
             updater = BatchedStatusUpdater(
                 buffer_size=10000,  # 大缓冲区，避免大小触发
                 flush_interval=flush_interval,
-                underlying_store=store
+                underlying_store=store,
             )
 
             start_time = time.time()
@@ -184,9 +176,7 @@ class TestBatchThroughputBenchmark:
         # 测试批量更新性能
         batch_store = {}
         batch_updater = BatchedStatusUpdater(
-            buffer_size=100,
-            flush_interval=10.0,
-            underlying_store=batch_store
+            buffer_size=100, flush_interval=10.0, underlying_store=batch_store
         )
 
         start_time = time.time()
@@ -222,11 +212,7 @@ class TestBatchThroughputBenchmark:
     def test_high_frequency_scenario(self):
         """测试高频提交场景（模拟真实工作负载）"""
         store = {}
-        updater = BatchedStatusUpdater(
-            buffer_size=100,
-            flush_interval=0.5,
-            underlying_store=store
-        )
+        updater = BatchedStatusUpdater(buffer_size=100, flush_interval=0.5, underlying_store=store)
 
         num_threads = 20
         tasks_per_thread = 250
@@ -241,7 +227,7 @@ class TestBatchThroughputBenchmark:
                 status = {
                     "status": random.choice(["pending", "running", "completed"]),
                     "progress": random.random(),
-                    "thread": thread_id
+                    "thread": thread_id,
                 }
                 updater.queue_update(task_id, status)
                 # 模拟真实场景中的微小延迟

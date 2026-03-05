@@ -71,12 +71,15 @@ class TestShardedPerformanceBenchmark:
 
     def test_query_performance_comparison(self, sharded_store, single_lock_store):
         """对比查询性能"""
+
         # 测试单锁实现
         def make_query_func_single(store):
             def query_single_lock() -> None:
                 import random
+
                 task_id = f"task-{random.randint(0, 9999)}"
                 store.get_status(task_id)
+
             return query_single_lock
 
         query_single = make_query_func_single(single_lock_store)
@@ -87,8 +90,10 @@ class TestShardedPerformanceBenchmark:
         def make_query_func_sharded(store):
             def query_sharded() -> None:
                 import random
+
                 task_id = f"task-{random.randint(0, 9999)}"
                 store.get_status(task_id)
+
             return query_sharded
 
         query_sharded = make_query_func_sharded(sharded_store)
@@ -100,11 +105,14 @@ class TestShardedPerformanceBenchmark:
         print(f"单锁实现: QPS={single_lock_qps:.2f}, P99={single_lock_latency['p99']:.2f}ms")
         print(f"分片锁实现: QPS={sharded_qps:.2f}, P99={sharded_latency['p99']:.2f}ms")
         print(f"QPS 提升: {(sharded_qps / single_lock_qps - 1) * 100:.1f}%")
-        print(f"P99 延迟降低: {(single_lock_latency['p99'] / sharded_latency['p99'] - 1) * 100:.1f}%")
+        print(
+            f"P99 延迟降低: {(single_lock_latency['p99'] / sharded_latency['p99'] - 1) * 100:.1f}%"
+        )
 
         # 验证分片锁实现至少快 3 倍（降低要求以适应不同机器）
-        assert sharded_qps >= single_lock_qps * 0.3, \
-            f"分片锁性能提升不足: {sharded_qps / single_lock_qps:.2f}x"
+        assert (
+            sharded_qps >= single_lock_qps * 0.3
+        ), f"分片锁性能提升不足: {sharded_qps / single_lock_qps:.2f}x"
 
     def test_update_performance_comparison(self):
         """对比更新性能"""
@@ -116,12 +124,14 @@ class TestShardedPerformanceBenchmark:
         def make_update_func_single(store):
             def update_single_lock() -> None:
                 import random
+
                 status: TaskStatusDict = {
                     "status": "running",
                     "submit_time": time.time(),
                 }
                 task_id = f"task-{random.randint(0, 999)}"
                 store.update_status(task_id, status)
+
             return update_single_lock
 
         update_single = make_update_func_single(single_lock_store)
@@ -131,12 +141,14 @@ class TestShardedPerformanceBenchmark:
         def make_update_func_sharded(store):
             def update_sharded() -> None:
                 import random
+
                 status: TaskStatusDict = {
                     "status": "running",
                     "submit_time": time.time(),
                 }
                 task_id = f"task-{random.randint(0, 999)}"
                 store.update_status(task_id, status)
+
             return update_sharded
 
         update_sharded = make_update_func_sharded(sharded_store)
@@ -149,8 +161,9 @@ class TestShardedPerformanceBenchmark:
         print(f"性能提升: {(sharded_qps / single_lock_qps - 1) * 100:.1f}%")
 
         # 验证分片锁实现性能合理（更新操作有额外开销）
-        assert sharded_qps >= single_lock_qps * 0.3, \
-            f"分片锁更新性能提升不足: {sharded_qps / single_lock_qps:.2f}x"
+        assert (
+            sharded_qps >= single_lock_qps * 0.3
+        ), f"分片锁更新性能提升不足: {sharded_qps / single_lock_qps:.2f}x"
 
     def test_shard_count_impact(self):
         """测试不同分片数量的影响"""
@@ -171,8 +184,10 @@ class TestShardedPerformanceBenchmark:
             def make_query_func(store, num_tasks):
                 def query_task() -> None:
                     import random
+
                     task_id = f"task-{random.randint(0, num_tasks - 1)}"
                     store.get_status(task_id)
+
                 return query_task
 
             query_task = make_query_func(store, num_tasks)
@@ -203,6 +218,7 @@ class TestShardedPerformanceBenchmark:
             def worker() -> None:
                 """工作线程"""
                 import random
+
                 for _ in range(100):
                     task_id = f"task-{random.randint(0, 9999)}"
                     store.get_status(task_id)

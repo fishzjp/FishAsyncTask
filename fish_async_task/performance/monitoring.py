@@ -44,9 +44,7 @@ class PerformanceMetrics:
         with self._lock:
             self._tasks_submitted += 1
 
-    def record_task_completed(
-        self, execution_time: float, queue_wait_time: float = 0.0
-    ) -> None:
+    def record_task_completed(self, execution_time: float, queue_wait_time: float = 0.0) -> None:
         """
         记录任务完成
 
@@ -106,12 +104,8 @@ class PerformanceMetrics:
             completed = self._tasks_completed
             total = self._tasks_submitted
 
-            avg_execution_time = (
-                self._total_execution_time / completed if completed > 0 else 0.0
-            )
-            avg_queue_wait_time = (
-                self._total_queue_wait_time / completed if completed > 0 else 0.0
-            )
+            avg_execution_time = self._total_execution_time / completed if completed > 0 else 0.0
+            avg_queue_wait_time = self._total_queue_wait_time / completed if completed > 0 else 0.0
 
             recent_execution_times = (
                 sum(self._execution_times) / len(self._execution_times)
@@ -134,12 +128,8 @@ class PerformanceMetrics:
                 - self._tasks_completed
                 - self._tasks_failed
                 - self._tasks_cancelled,
-                "success_rate": (
-                    completed / total if total > 0 else 0.0
-                ),
-                "failure_rate": (
-                    self._tasks_failed / total if total > 0 else 0.0
-                ),
+                "success_rate": (completed / total if total > 0 else 0.0),
+                "failure_rate": (self._tasks_failed / total if total > 0 else 0.0),
                 "avg_execution_time_seconds": avg_execution_time,
                 "avg_queue_wait_time_seconds": avg_queue_wait_time,
                 "recent_avg_execution_time_seconds": recent_execution_times,
@@ -153,9 +143,7 @@ class PerformanceMetrics:
                     if self._cleanup_count > 0
                     else 0.0
                 ),
-                "tasks_per_second": (
-                    self._tasks_submitted / uptime if uptime > 0 else 0.0
-                ),
+                "tasks_per_second": (self._tasks_submitted / uptime if uptime > 0 else 0.0),
             }
 
     def get_percentiles(self, percentiles: List[int] = None) -> Dict[str, float]:

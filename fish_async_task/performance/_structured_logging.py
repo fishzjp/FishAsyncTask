@@ -99,9 +99,7 @@ class StructuredLogger:
         """
         self._logger.error(self._format_message(message, kwargs), exc_info=exc_info)
 
-    def critical(
-        self, message: str, exc_info: bool = False, **kwargs: Any
-    ) -> None:
+    def critical(self, message: str, exc_info: bool = False, **kwargs: Any) -> None:
         """
         严重错误级别日志
 
@@ -134,9 +132,7 @@ class StructuredLogger:
         if context:
             error_context.update(context)
 
-        self._logger.error(
-            self._format_message(message, error_context), exc_info=True
-        )
+        self._logger.error(self._format_message(message, error_context), exc_info=True)
 
 
 class ContextLogger:
@@ -196,9 +192,7 @@ class ContextLogger:
     def error(self, message: str, exc_info: bool = False, **kwargs: Any) -> None:
         self._logger.error(message, exc_info=exc_info, **kwargs)
 
-    def critical(
-        self, message: str, exc_info: bool = False, **kwargs: Any
-    ) -> None:
+    def critical(self, message: str, exc_info: bool = False, **kwargs: Any) -> None:
         self._logger.critical(message, exc_info=exc_info, **kwargs)
 
 
