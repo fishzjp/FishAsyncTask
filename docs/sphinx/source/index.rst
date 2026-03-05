@@ -6,6 +6,8 @@ FishAsyncTask 文档
    :align: center
    :width: 200px
 
+**在线文档**: https://fishzjp.github.io/FishAsyncTask/
+
 **FishAsyncTask** 是一个高性能异步任务管理器，支持线程池和动态伸缩。
 
 **默认采用 Rust 核心实现**，提供卓越性能。安装即用，无需额外配置。
