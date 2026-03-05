@@ -30,7 +30,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 class ConfigLoader:
@@ -162,12 +162,12 @@ class ConfigLoader:
             self.logger.warning(f"无效的 TASK_TIMEOUT 格式: {task_timeout}，禁用超时")
             return None
 
-    def load_adaptive_worker_config(self) -> dict:
+    def load_adaptive_worker_config(self) -> Dict[str, Any]:
         """
         加载自适应线程管理配置
 
         Returns:
-            dict: 自适应配置字典，包含以下键：
+            Dict[str, Any]: 自适应配置字典，包含以下键：
                 - adaptive_worker_enabled: 是否启用自适应线程管理
                 - cpu_threshold: CPU使用率阈值
                 - queue_threshold_high: 扩容队列积压阈值
@@ -307,12 +307,12 @@ class ConfigLoader:
             self.logger.warning(f"无效的 {env_key}: {env_value}，使用默认值 {default}")
             return default
 
-    def load_performance_config(self) -> dict:
+    def load_performance_config(self) -> Dict[str, Any]:
         """
         加载性能优化配置
 
         Returns:
-            dict: 性能优化配置字典，包含以下键：
+            Dict[str, Any]: 性能优化配置字典，包含以下键：
                 - shard_count: 分片数量
                 - batch_update_buffer_size: 批量更新缓冲区大小
                 - batch_update_interval: 批量更新刷新间隔（秒）
@@ -373,9 +373,9 @@ class HotReloadConfig:
 
     def __init__(
         self,
-        logger: logging.Logger = None,
+        logger: Optional[logging.Logger] = None,
         reload_interval: int = 60,
-    ):
+    ) -> None:
         """
         初始化热重载配置管理器
 
@@ -383,17 +383,17 @@ class HotReloadConfig:
             logger: 日志记录器
             reload_interval: 重载间隔（秒）
         """
-        self.logger = logger or logging.getLogger(__name__)
-        self._reload_interval = reload_interval
-        self._last_reload = 0.0
-        self._config_cache: dict = {}
-        self._config_parsers: dict = {}
-        self._lock = threading.Lock()
+        self.logger: logging.Logger = logger or logging.getLogger(__name__)
+        self._reload_interval: int = reload_interval
+        self._last_reload: float = 0.0
+        self._config_cache: Dict[str, Any] = {}
+        self._config_parsers: Dict[str, Dict[str, Any]] = {}
+        self._lock: threading.Lock = threading.Lock()
 
     def register_config(
         self,
         key: str,
-        parser: callable,
+        parser: Callable[[], Any],
         default: Any = None,
     ) -> None:
         """
@@ -472,12 +472,12 @@ class HotReloadConfig:
             self._last_reload = time.time()
             return reloaded
 
-    def get_all(self) -> dict:
+    def get_all(self) -> Dict[str, Any]:
         """
         获取所有配置
 
         Returns:
-            dict: 所有配置项
+            Dict[str, Any]: 所有配置项
         """
         with self._lock:
             return dict(self._config_cache)
@@ -493,8 +493,8 @@ def validate_config(
     min_value: Any = None,
     max_value: Any = None,
     default: Any = None,
-    allowed_values: list = None,
-):
+    allowed_values: Optional[List[Any]] = None,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     配置验证装饰器
 
@@ -505,11 +505,11 @@ def validate_config(
         allowed_values: 允许的值列表
 
     Returns:
-        装饰器函数
+        Callable[[Callable[..., Any]], Callable[..., Any]]: 装饰器函数
     """
 
-    def decorator(func):
-        def wrapper(*args, **kwargs):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             value = func(*args, **kwargs)
 
             if value is None:

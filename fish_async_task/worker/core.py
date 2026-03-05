@@ -28,6 +28,7 @@ class WorkerManager:
     - 所有对worker_threads列表的操作都在threads_lock保护下进行
     - 线程退出时会从列表中安全移除，避免竞态条件
     - 自适应扩缩容操作在threads_lock保护下进行
+    - 使用退出事件确认机制确保线程完全退出
     """
 
     # 配置常量
@@ -97,6 +98,9 @@ class WorkerManager:
         self.task_timeout = task_timeout
         self._execute_task = execute_task_func
         self.adaptive_worker_enabled = adaptive_worker_enabled
+
+        # 线程退出事件跟踪（用于确认线程已完全退出）
+        self._thread_exit_events: Dict[str, threading.Event] = {}
 
         # 从环境变量读取配置（如果未提供）
         self.cpu_threshold = self._load_config_float(
@@ -212,6 +216,9 @@ class WorkerManager:
             name=f"TaskWorker-{uuid.uuid4()}",
             daemon=True,
         )
+        # 为线程创建退出事件
+        exit_event = threading.Event()
+        self._thread_exit_events[thread.name] = exit_event
         thread.start()
         self.worker_threads.append(thread)
         self.logger.info("启动新工作线程，当前线程数: %d", len(self.worker_threads))
@@ -327,89 +334,96 @@ class WorkerManager:
         从任务队列中获取任务并执行。当空闲时间超过 idle_timeout 且
         当前线程数大于 min_workers 时，线程会自动退出以节省资源。
         同时记录任务执行时间用于自适应管理。
+        使用退出事件确认机制，确保线程完全退出后才从列表中移除。
         """
         thread_name = threading.current_thread().name
         self.logger.debug("工作线程启动: %s", thread_name)
         idle_start: Optional[float] = None
 
-        while self._running_event.is_set():
-            try:
-                task = self.task_queue.get(timeout=self.QUEUE_GET_TIMEOUT)
+        try:
+            while self._running_event.is_set():
+                try:
+                    task = self.task_queue.get(timeout=self.QUEUE_GET_TIMEOUT)
 
-                # 退出信号
-                if task is None:
+                    # 退出信号
+                    if task is None:
+                        self.task_queue.task_done()
+                        break
+
+                    idle_start = None
+                    task_start_time = time.time()
+
+                    # 执行任务
+                    self._execute_task(task)
                     self.task_queue.task_done()
+
+                    # 记录任务执行时间（用于自适应管理）
+                    task_end_time = time.time()
+                    self.record_task_time(task_end_time - task_start_time)
+
+                except queue.Empty:
+                    now = time.time()
+                    if idle_start is None:
+                        idle_start = now
+                        # 更新空闲开始时间（用于自适应管理）
+                        if self._adaptive_manager is not None:
+                            self._idle_start_time = idle_start
+                    elif self._check_idle_timeout(thread_name, idle_start):
+                        break
+                    continue
+
+                except KeyboardInterrupt:
+                    # 键盘中断，正常退出
+                    self.logger.info(f"工作线程收到中断信号: {thread_name}")
                     break
-
-                idle_start = None
-                task_start_time = time.time()
-
-                # 执行任务
-                self._execute_task(task)
-                self.task_queue.task_done()
-
-                # 记录任务执行时间（用于自适应管理）
-                task_end_time = time.time()
-                self.record_task_time(task_end_time - task_start_time)
-
-            except queue.Empty:
-                now = time.time()
-                if idle_start is None:
-                    idle_start = now
-                    # 更新空闲开始时间（用于自适应管理）
-                    if self._adaptive_manager is not None:
-                        self._idle_start_time = idle_start
-                elif self._check_idle_timeout(thread_name, idle_start):
-                    break
-                continue
-
-            except KeyboardInterrupt:
-                # 键盘中断，正常退出
-                self.logger.info(f"工作线程收到中断信号: {thread_name}")
-                break
-            except SystemExit:
-                # 系统退出，重新抛出，不捕获
-                raise
-            except queue.Full:
-                # 队列满异常，不应该在工作线程中出现，记录警告
-                self.logger.warning(f"工作线程意外遇到队列满异常: {thread_name}")
-            except TimeoutError as e:
-                # 超时异常，记录警告但继续运行
-                self.logger.warning(f"工作线程任务执行超时: {e}")
-            except (IOError, OSError, ConnectionError) as e:
-                # I/O 相关异常，可能是临时性问题，记录警告并继续
-                self.logger.warning(f"工作线程遇到 I/O 相关异常 [{type(e).__name__}]: {e}")
-            except (MemoryError, ResourceWarning) as e:
-                # 资源相关异常，记录错误但尝试继续运行
-                self.logger.error(f"工作线程遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True)
-            except (TimeoutError, RuntimeError) as e:
-                # 超时和运行时错误，记录错误但继续运行
-                self.logger.error(
-                    f"工作线程遇到运行时异常 [{type(e).__name__}]: {e}", exc_info=True
-                )
-            except Exception as e:
-                # 记录未预期的异常，但不中断线程运行
-                # 这确保了单个任务的异常不会影响整个线程池的运行
-                error_type = type(e).__name__
-                # 注意：这里捕获所有异常是为了保持线程池运行
-                # 如果是编程错误（TypeError、AttributeError等），应该修复而不是掩盖
-                if error_type in (
-                    "TypeError",
-                    "AttributeError",
-                    "ValueError",
-                    "KeyError",
-                    "IndexError",
-                ):
-                    # 编程错误应该向上传播，以便开发时发现
-                    self.logger.critical(
-                        f"工作线程遇到编程错误 [{error_type}]: {e}，建议修复代码", exc_info=True
-                    )
-                    # 重新抛出编程错误，以便快速失败
+                except SystemExit:
+                    # 系统退出，重新抛出，不捕获
                     raise
-                else:
-                    self.logger.error(f"工作线程执行未预期异常 [{error_type}]: {e}", exc_info=True)
-
-        self.logger.debug("工作线程退出: %s", thread_name)
+                except queue.Full:
+                    # 队列满异常，不应该在工作线程中出现，记录警告
+                    self.logger.warning(f"工作线程意外遇到队列满异常: {thread_name}")
+                except TimeoutError as e:
+                    # 超时异常，记录警告但继续运行
+                    self.logger.warning(f"工作线程任务执行超时: {e}")
+                except (IOError, OSError, ConnectionError) as e:
+                    # I/O 相关异常，可能是临时性问题，记录警告并继续
+                    self.logger.warning(f"工作线程遇到 I/O 相关异常 [{type(e).__name__}]: {e}")
+                except (MemoryError, ResourceWarning) as e:
+                    # 资源相关异常，记录错误但尝试继续运行
+                    self.logger.error(f"工作线程遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True)
+                except (TimeoutError, RuntimeError) as e:
+                    # 超时和运行时错误，记录错误但继续运行
+                    self.logger.error(
+                        f"工作线程遇到运行时异常 [{type(e).__name__}]: {e}", exc_info=True
+                    )
+                except Exception as e:
+                    # 记录未预期的异常，但不中断线程运行
+                    # 这确保了单个任务的异常不会影响整个线程池的运行
+                    error_type = type(e).__name__
+                    # 注意：这里捕获所有异常是为了保持线程池运行
+                    # 如果是编程错误（TypeError、AttributeError等），应该修复而不是掩盖
+                    if error_type in (
+                        "TypeError",
+                        "AttributeError",
+                        "ValueError",
+                        "KeyError",
+                        "IndexError",
+                    ):
+                        # 编程错误应该向上传播，以便开发时发现
+                        self.logger.critical(
+                            f"工作线程遇到编程错误 [{error_type}]: {e}，建议修复代码", exc_info=True
+                        )
+                        # 重新抛出编程错误，以便快速失败
+                        raise
+                    else:
+                        self.logger.error(f"工作线程执行未预期异常 [{error_type}]: {e}", exc_info=True)
+        finally:
+            # 设置线程退出事件，通知管理器线程已退出
+            if thread_name in self._thread_exit_events:
+                self._thread_exit_events[thread_name].set()
+                # 清理退出事件引用
+                del self._thread_exit_events[thread_name]
+            self.logger.debug("工作线程退出: %s", thread_name)
 
     def send_shutdown_signals(self) -> None:
         """
@@ -453,6 +467,7 @@ class WorkerManager:
         等待所有工作线程退出
 
         在锁内创建线程副本以避免竞态条件，然后逐个等待线程退出。
+        使用退出事件确认机制，确保线程完全退出。
         如果线程在超时时间内未退出，会记录警告但继续执行。
 
         Args:
@@ -465,6 +480,12 @@ class WorkerManager:
         for thread in threads_to_wait:
             if thread.is_alive():
                 try:
+                    # 等待线程退出事件设置（表示线程已完成清理）
+                    exit_event = self._thread_exit_events.get(thread.name)
+                    if exit_event:
+                        exit_event.wait(timeout=join_timeout)
+
+                    # 执行线程 join
                     thread.join(timeout=join_timeout)
                     if thread.is_alive():
                         self.logger.warning(f"线程 {thread.name} 在超时后仍未退出")
@@ -477,3 +498,6 @@ class WorkerManager:
                     # 其他未预期的异常
                     error_type = type(e).__name__
                     self.logger.warning(f"线程 {thread.name} join 失败 [{error_type}]: {e}")
+
+        # 清理所有退出事件引用
+        self._thread_exit_events.clear()

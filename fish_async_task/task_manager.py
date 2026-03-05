@@ -48,6 +48,7 @@ class TaskManager:
 
     # 实例属性类型声明
     _instance_key: str
+    _timers: List["threading.Timer"]
 
     def __new__(cls, instance_key: str = "default") -> "TaskManager":
         """
@@ -125,24 +126,35 @@ class TaskManager:
 
     def _init_task_manager(self) -> None:
         """初始化任务管理器"""
-        # 初始化logger（需要在验证 instance_key 之前初始化）
         self.logger = logging.getLogger(__name__)
 
-        # 初始化基础数据结构
-        self.task_queue: "queue.Queue[TaskTuple]" = queue.Queue(maxsize=self.DEFAULT_QUEUE_SIZE)
+        # 按步骤初始化各个组件
+        self._init_basic_structures()
+        config_loader = ConfigLoader(self.logger)
+        self._init_worker_config()
+        self._load_configurations(config_loader)
+        self._init_flags_and_tracking()
+        self._init_managers()
+        self._log_initialization_status()
+        self._start_initial_threads()
+
+    def _init_basic_structures(self) -> None:
+        """初始化基础数据结构"""
+        self.task_queue: "queue.Queue[TaskTuple]" = queue.Queue(
+            maxsize=self.DEFAULT_QUEUE_SIZE
+        )
         self.worker_threads: List[threading.Thread] = []
         self.threads_lock = threading.Lock()
 
-        # 初始化配置加载器
-        config_loader = ConfigLoader(self.logger)
-
-        # 初始化工作线程配置
+    def _init_worker_config(self) -> None:
+        """初始化工作线程配置"""
         self.min_workers = self.DEFAULT_MIN_WORKERS
         cpu_count = os.cpu_count() or 1
         self.max_workers = max(self.DEFAULT_MIN_MAX_WORKERS, cpu_count * self.CPU_MULTIPLIER)
         self.idle_timeout = self.DEFAULT_IDLE_TIMEOUT
 
-        # 加载并验证配置
+    def _load_configurations(self, config_loader: ConfigLoader) -> None:
+        """加载并验证配置"""
         self.task_status_ttl = config_loader.load_int_config(
             "TASK_STATUS_TTL",
             self.DEFAULT_TASK_STATUS_TTL,
@@ -166,31 +178,32 @@ class TaskManager:
         )
         self.task_timeout = config_loader.load_timeout_config(self.DEFAULT_TASK_TIMEOUT)
 
-        # 初始化运行标志
+    def _init_flags_and_tracking(self) -> None:
+        """初始化运行标志和跟踪变量"""
         self._running_event = threading.Event()
         self._running_event.set()
 
-        # 初始化扩缩容调度标志（用于延迟批量检查）
+        self._timers: List[threading.Timer] = []
+
         self._scale_scheduled = False
         self._scale_lock = threading.Lock()
-        self._scale_check_interval = 0.1  # 扩缩容检查间隔（秒）
-        self._scale_scheduled_time = 0.0  # 上次调度时间（用于超时重置）
+        self._scale_check_interval = 0.1
+        self._scale_scheduled_time = 0.0
 
-        # 初始化任务状态管理器
+    def _init_managers(self) -> None:
+        """初始化各个管理器"""
         self.status_manager = TaskStatusManager(
             self.logger,
             self.task_status_ttl,
             self.max_task_status_count,
         )
 
-        # 初始化任务执行器（使用lambda动态获取超时值）
         self.task_executor = TaskExecutor(
             self.logger,
             lambda: self.task_timeout,
             self.status_manager.update_task_status,
         )
 
-        # 初始化工作线程管理器
         self.worker_manager = WorkerManager(
             self.logger,
             self.task_queue,
@@ -204,7 +217,6 @@ class TaskManager:
             self.task_executor.execute_task,
         )
 
-        # 初始化清理线程管理器
         self.cleanup_manager = CleanupThreadManager(
             self.logger,
             self._running_event,
@@ -212,8 +224,9 @@ class TaskManager:
             self.status_manager.cleanup_old_task_status,
         )
 
+    def _log_initialization_status(self) -> None:
+        """记录初始化状态"""
         self.logger.info("任务管理器初始化完成")
-
         self.logger.debug(
             f"任务管理器配置 - TTL: {self.task_status_ttl}s, "
             f"最大状态数: {self.max_task_status_count}, "
@@ -221,7 +234,8 @@ class TaskManager:
             f"任务超时: {self.task_timeout or '无限制'}s"
         )
 
-        # 启动初始线程和清理线程
+    def _start_initial_threads(self) -> None:
+        """启动初始线程"""
         self.worker_manager.start_initial_workers()
         self.cleanup_manager.start()
 
@@ -287,6 +301,10 @@ class TaskManager:
         scale_timer = threading.Timer(self._scale_check_interval, delayed_scale_check)
         scale_timer.daemon = True
         scale_timer.start()
+
+        # 跟踪 Timer 以便后续清理
+        with self._scale_lock:
+            self._timers.append(scale_timer)
 
     def submit_task(
         self,
@@ -413,10 +431,11 @@ class TaskManager:
 
         优雅关闭流程：
         1. 清除运行标志，停止接受新任务
-        2. 发送退出信号给所有工作线程
-        3. 等待所有工作线程退出
-        4. 等待清理线程退出
-        5. 清理所有资源（线程列表、任务状态等）
+        2. 取消所有活动的 Timer
+        3. 发送退出信号给所有工作线程
+        4. 等待所有工作线程退出
+        5. 等待清理线程退出
+        6. 清理所有资源（线程列表、任务状态等）
 
         注意：如果多次调用，只有第一次调用会生效。
         """
@@ -426,6 +445,13 @@ class TaskManager:
 
         self._running_event.clear()
         self.logger.info("正在关闭任务管理器...")
+
+        # 取消所有活动的 Timer
+        with self._scale_lock:
+            for timer in self._timers:
+                if timer.is_alive():
+                    timer.cancel()
+            self._timers.clear()
 
         # 发送退出信号给所有工作线程
         self.worker_manager.send_shutdown_signals()
@@ -441,3 +467,40 @@ class TaskManager:
             self.worker_threads.clear()
         self.status_manager.clear_task_status()
         self.logger.info("任务管理器已关闭")
+
+    @classmethod
+    def destroy_instance(cls, instance_key: str = "default") -> bool:
+        """
+        销毁指定的单例实例
+
+        清理并移除指定的单例实例，释放相关资源。
+        适用于需要完全释放 TaskManager 资源的场景。
+
+        Args:
+            instance_key: 要销毁的实例键名，默认为 "default"
+
+        Returns:
+            bool: 如果实例存在并被销毁则返回 True，否则返回 False
+
+        Example:
+            >>> # 销毁默认实例
+            >>> TaskManager.destroy_instance()
+            >>>
+            >>> # 销毁特定实例
+            >>> TaskManager.destroy_instance("order")
+
+        Note:
+            - 销毁后，再次创建相同 instance_key 的实例会重新初始化
+            - 如果实例正在运行中，会先调用 shutdown() 清理资源
+            - 此方法是线程安全的
+        """
+        with cls._instance_lock:
+            if instance_key in cls._instances:
+                instance = cls._instances[instance_key]
+                # 如果实例仍在运行，先关闭
+                if instance._running_event.is_set():
+                    instance.shutdown()
+                # 从实例字典中移除
+                del cls._instances[instance_key]
+                return True
+            return False
