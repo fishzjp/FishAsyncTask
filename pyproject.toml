@@ -86,6 +86,9 @@ python_functions = ["test_*"]
 filterwarnings = [
     "ignore::pytest.PytestReturnNotNoneWarning",
 ]
+markers = [
+    "smoke: 冒烟测试，快速验证核心功能",
+]
 
 [tool.mypy]
 python_version = "3.9"
