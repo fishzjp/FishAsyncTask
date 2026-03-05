@@ -97,8 +97,8 @@ pre-commit install
 安装后可以验证 Rust 核心是否已启用：
 
 ```python
-from fish_async_task._rust import is_rust_available
-print(f"Rust 核心已启用: {is_rust_available()}")  # 应该输出 True
+import fish_async_task
+print(f"Rust 核心已启用: {fish_async_task.__version__}")  # 应该输出 3.0.1
 ```
 
 > 📖 详细文档请访问: **https://fishzjp.github.io/FishAsyncTask/**
