@@ -23,11 +23,13 @@ class ReadWriteLock:
     使用写优先策略防止写饥饿：当有写操作等待时，新的读操作会排队。
 
     基于 threading.Condition 实现，支持上下文管理器。
+    支持超时机制，防止在高并发场景下死锁。
 
     使用场景：
     - 读多写少的场景，读操作可以并发执行
     - 写操作需要独占访问，与所有读操作互斥
     - 需要防止写饥饿的场景
+    - 需要防止死锁的场景（使用超时）
 
     示例：
         lock = ReadWriteLock()
@@ -41,7 +43,17 @@ class ReadWriteLock:
         with ReadWriteLockContext(lock, write=True):
             # 同一时间只有一个线程可以进入这里
             self._data = new_data
+
+        # 带超时的读操作
+        if lock.acquire_read(timeout=5.0):
+            try:
+                data = self._data
+            finally:
+                lock.release_read()
     """
+
+    # 默认超时时间（秒）
+    DEFAULT_TIMEOUT = 30.0
 
     def __init__(self):
         """初始化读写锁"""
@@ -49,17 +61,49 @@ class ReadWriteLock:
         self._readers = 0
         self._writers_waiting = 0  # 等待的写操作数量
 
-    def acquire_read(self) -> None:
+    def acquire_read(self, timeout: Optional[float] = None) -> bool:
         """
         获取读锁
 
         如果有写操作在等待，新的读操作会排队等待，防止写饥饿。
+
+        Args:
+            timeout: 超时时间（秒）。如果为 None，使用默认超时时间。
+                     如果为负数或 0，立即尝试获取，不等待。
+
+        Returns:
+            bool: 如果成功获取锁则返回 True，超时则返回 False
+
+        Raises:
+            TimeoutError: 等待超时后抛出异常
         """
+        if timeout is None:
+            timeout = self.DEFAULT_TIMEOUT
+
+        end_time = None
+        if timeout > 0:
+            end_time = time.time() + timeout
+
         with self._read_ready:
             # 如果有写操作在等待，读操作需要等待
             while self._writers_waiting > 0:
-                self._read_ready.wait()
+                if timeout <= 0:
+                    # 不等待，立即返回失败
+                    return False
+
+                if end_time is not None:
+                    remaining = end_time - time.time()
+                    if remaining <= 0:
+                        # 超时
+                        raise TimeoutError(f"获取读锁超时（{timeout}秒）")
+                    if not self._read_ready.wait(remaining):
+                        # wait 返回 False 表示超时
+                        raise TimeoutError(f"获取读锁超时（{timeout}秒）")
+                else:
+                    self._read_ready.wait(timeout)
+
             self._readers += 1
+            return True
 
     def release_read(self) -> None:
         """
@@ -73,23 +117,88 @@ class ReadWriteLock:
                 # 优先唤醒写操作
                 self._read_ready.notify_all()
 
-    def acquire_write(self) -> None:
+    def acquire_write(self, timeout: Optional[float] = None) -> bool:
         """
         获取写锁
 
         写锁是独占的，会等待所有读操作完成后才能获取。
         使用写优先策略，防止写饥饿。
+
+        Args:
+            timeout: 超时时间（秒）。如果为 None，使用默认超时时间。
+                     如果为负数或 0，立即尝试获取，不等待。
+
+        Returns:
+            bool: 如果成功获取锁则返回 True，超时则返回 False
+
+        Raises:
+            TimeoutError: 等待超时后抛出异常
         """
+        if timeout is None:
+            timeout = self.DEFAULT_TIMEOUT
+
+        end_time = None
+        if timeout > 0:
+            end_time = time.time() + timeout
+
         with self._read_ready:
             # 增加等待的写操作计数
             self._writers_waiting += 1
 
-        # 获取底层锁（这样其他读操作无法继续）
-        self._read_ready.acquire()
+        try:
+            # 获取底层锁（这样其他读操作无法继续）
+            if timeout <= 0:
+                # 不等待，尝试非阻塞获取
+                if not self._read_ready.acquire(blocking=False):
+                    with self._read_ready:
+                        self._writers_waiting -= 1
+                    return False
+            else:
+                # 带超时的获取
+                if end_time is not None:
+                    remaining = end_time - time.time()
+                    if remaining <= 0:
+                        with self._read_ready:
+                            self._writers_waiting -= 1
+                        raise TimeoutError(f"获取写锁超时（{timeout}秒）")
+                    if not self._read_ready.acquire(timeout=remaining):
+                        with self._read_ready:
+                            self._writers_waiting -= 1
+                        raise TimeoutError(f"获取写锁超时（{timeout}秒）")
+                else:
+                    self._read_ready.acquire(timeout=timeout)
 
-        # 等待所有读操作完成
-        while self._readers > 0:
-            self._read_ready.wait()
+            # 等待所有读操作完成
+            while self._readers > 0:
+                if timeout <= 0:
+                    # 不等待
+                    self._read_ready.release()
+                    with self._read_ready:
+                        self._writers_waiting -= 1
+                    return False
+
+                if end_time is not None:
+                    remaining = end_time - time.time()
+                    if remaining <= 0:
+                        self._read_ready.release()
+                        with self._read_ready:
+                            self._writers_waiting -= 1
+                        raise TimeoutError(f"获取写锁超时（{timeout}秒）")
+                    if not self._read_ready.wait(remaining):
+                        self._read_ready.release()
+                        with self._read_ready:
+                            self._writers_waiting -= 1
+                        raise TimeoutError(f"获取写锁超时（{timeout}秒）")
+                else:
+                    self._read_ready.wait(timeout)
+
+            return True
+        except Exception:
+            # 如果出现任何异常，确保减少等待计数
+            with self._read_ready:
+                if self._writers_waiting > 0:
+                    self._writers_waiting -= 1
+            raise
 
     def release_write(self) -> None:
         """
@@ -113,19 +222,21 @@ class ReadWriteLockContext:
     """
     读写锁上下文管理器
 
-    提供便捷的锁获取和释放方式。
+    提供便捷的锁获取和释放方式。支持超时参数。
     """
 
-    def __init__(self, lock: ReadWriteLock, write: bool = False):
+    def __init__(self, lock: ReadWriteLock, write: bool = False, timeout: Optional[float] = None):
         """
         初始化上下文管理器
 
         Args:
             lock: 读写锁实例
             write: 是否为写操作（True=写锁，False=读锁）
+            timeout: 超时时间（秒），如果为 None 则使用默认超时
         """
         self._lock = lock
         self._write = write
+        self._timeout = timeout
 
     def __enter__(self) -> "ReadWriteLockContext":
         """
@@ -136,11 +247,14 @@ class ReadWriteLockContext:
 
         Returns:
             ReadWriteLockContext: 返回自身实例，用于 with 语句块
+
+        Raises:
+            TimeoutError: 获取锁超时
         """
         if self._write:
-            self._lock.acquire_write()
+            self._lock.acquire_write(timeout=self._timeout)
         else:
-            self._lock.acquire_read()
+            self._lock.acquire_read(timeout=self._timeout)
         return self
 
     def __exit__(self, *args) -> None:

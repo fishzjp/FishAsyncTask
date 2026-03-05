@@ -101,7 +101,7 @@ from fish_async_task._rust import is_rust_available
 print(f"Rust 核心已启用: {is_rust_available()}")  # 应该输出 True
 ```
 
-> 📖 详细的安装说明请参考 [安装文档](docs/INSTALL.md)
+> 📖 详细文档请访问: https://fishasynctask.readthedocs.io/zh-cn/latest/index.html
 
 ## 快速开始
 
@@ -181,16 +181,18 @@ task_manager.submit_task(low_priority_task, priority=10)
 
 ## 文档
 
-详细的文档请参考以下链接：
+完整文档请访问: **https://fishasynctask.readthedocs.io/zh-cn/latest/index.html**
 
-- 📖 [安装文档](docs/INSTALL.md) - 详细的安装说明和开发环境设置
-- 📚 [API 文档](docs/API.md) - 完整的 API 参考
-- ⚙️ [配置文档](docs/CONFIG.md) - 环境变量和配置说明
-- 💡 [最佳实践](docs/BEST_PRACTICES.md) - 使用建议和注意事项
-- 🚀 [高级使用指南](docs/ADVANCED_USAGE.md) - 性能监控、资源管理、任务优先级等高级功能
-- ❓ [常见问题](docs/FAQ.md) - FAQ 和问题解答
-- 📝 [更新日志](docs/CHANGELOG.md) - 版本更新记录
-- 🔧 [Rust 重构技术方案](docs/plans/2026-03-03-rust-refactor-design.md) - Rust 实现的技术细节
+包括：
+- 📖 快速开始指南
+- 📚 完整的 API 参考
+- ⚙️ 配置说明
+- 💡 最佳实践
+- 🚀 高级功能（优先级队列、任务依赖、性能监控等）
+- ❓ 常见问题解答
+
+技术方案文档：
+- 🔧 [Rust 重构技术方案](docs/plans/2026-03-03-rust-refactor-design.md)
 
 ## 使用场景
 

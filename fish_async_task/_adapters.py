@@ -4,9 +4,16 @@ Python/Rust 统一适配器
 提供统一的接口，自动选择 Rust 或 Python 实现。
 """
 
-from typing import Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from .types import TaskStatusDict
+
+if TYPE_CHECKING:
+    from ._rust import (
+        PyPriorityTaskQueue,
+        PyShardedTaskStatus,
+        PyTaskDependencyManager,
+    )
 
 # 尝试导入 Rust 实现
 try:
@@ -38,7 +45,7 @@ class ShardedTaskStatusAdapter:
     """
 
     @classmethod
-    def create(cls, shard_count: int = 16, ttl: int = 3600):
+    def create(cls, shard_count: int = 16, ttl: int = 3600) -> "ShardedTaskStatusAdapter":
         """
         创建状态存储实例
 
@@ -82,8 +89,8 @@ class ShardedTaskStatusAdapter:
 class _RustShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
     """Rust 实现适配器"""
 
-    def __init__(self, shard_count: int, ttl: int):
-        self._rust = PyShardedTaskStatus(shard_count, ttl)
+    def __init__(self, shard_count: int, ttl: int) -> None:
+        self._rust: "PyShardedTaskStatus" = PyShardedTaskStatus(shard_count, ttl)  # type: ignore[name-defined]
 
     def get_status(self, task_id: str) -> Optional[TaskStatusDict]:
         # Rust 直接返回正确格式的字典，无需二次转换
@@ -122,8 +129,8 @@ class _RustShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
 class _PythonShardedTaskStatusAdapter(ShardedTaskStatusAdapter):
     """Python 实现适配器（回退）"""
 
-    def __init__(self, shard_count: int, ttl: int):
-        self._inner = ShardedTaskStatusWithExpiry(shard_count, ttl)
+    def __init__(self, shard_count: int, ttl: int) -> None:
+        self._inner: ShardedTaskStatusWithExpiry = ShardedTaskStatusWithExpiry(shard_count, ttl)
 
     def get_status(self, task_id: str) -> Optional[TaskStatusDict]:
         return self._inner.get_status(task_id)
@@ -152,7 +159,7 @@ class PriorityTaskQueueAdapter:
     """
 
     @classmethod
-    def create(cls, maxsize: int = 1000):
+    def create(cls, maxsize: int = 1000) -> "PriorityTaskQueueAdapter":
         """
         创建优先级队列实例
 
@@ -193,11 +200,11 @@ class PriorityTaskQueueAdapter:
 class _RustPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
     """Rust 优先级队列适配器"""
 
-    def __init__(self, maxsize: int):
+    def __init__(self, maxsize: int) -> None:
         import time
 
-        self._rust = PyPriorityTaskQueue(maxsize)
-        self._tasks = {}  # task_id -> (priority, task_id, submit_time)
+        self._rust: "PyPriorityTaskQueue" = PyPriorityTaskQueue(maxsize)  # type: ignore[name-defined]
+        self._tasks: Dict[str, Tuple[int, str, float]] = {}  # task_id -> (priority, task_id, submit_time)
 
     def put(
         self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None
@@ -224,8 +231,8 @@ class _RustPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
 class _PythonPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
     """Python 优先级队列适配器（回退）"""
 
-    def __init__(self, maxsize: int):
-        self._inner = PythonPriorityTaskQueue(maxsize=maxsize)
+    def __init__(self, maxsize: int) -> None:
+        self._inner: PythonPriorityTaskQueue = PythonPriorityTaskQueue(maxsize=maxsize)
 
     def put(
         self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None

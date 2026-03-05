@@ -25,11 +25,13 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 
-dependencies = []
+dependencies = [
+    "typing-extensions>=4.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/fishzjp/FishAsyncTask"
-Documentation = "https://github.com/fishzjp/FishAsyncTask#readme"
+Documentation = "https://fishasynctask.readthedocs.io/zh-cn/latest/"
 Repository = "https://github.com/fishzjp/FishAsyncTask"
 Issues = "https://github.com/fishzjp/FishAsyncTask/issues"
 
@@ -46,14 +48,14 @@ packages = ["fish_async_task"]
 
 [tool.black]
 line-length = 100
-target-version = ['py37']
+target-version = ['py39', 'py310', 'py311', 'py312']
 
 [project.optional-dependencies]
 performance = [
-    "psutil>=5.9.0",
-    "redis>=4.5.0",        # huey 和 dramatiq 需要
-    "huey>=2.4.0",         # 轻量级任务队列
-    "dramatiq>=1.14.0",    # 高性能任务队列
+    "psutil>=5.9.0,<7.0.0",
+    "redis>=4.5.0,<6.0.0",        # huey 和 dramatiq 需要
+    "huey>=2.4.0,<3.0.0",         # 轻量级任务队列
+    "dramatiq>=1.14.0,<2.0.0",    # 高性能任务队列
 ]
 dev = [
     "pytest>=7.0.0",
