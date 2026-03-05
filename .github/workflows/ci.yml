@@ -77,7 +77,6 @@ jobs:
         else
           source .venv/bin/activate
         fi
-        cd fish_async_task_core
         maturin develop --release
 
     - name: Verify Rust extension

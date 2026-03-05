@@ -29,7 +29,6 @@ jobs:
 
     - name: Build Rust extension
       run: |
-        cd fish_async_task_core
         maturin develop --release
 
     - name: Install dependencies
