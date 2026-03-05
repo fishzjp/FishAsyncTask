@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "fish-async-task"
-version = "0.3.0"
+version = "3.0.1"
 description = "高性能异步任务管理器，默认采用Rust核心实现，支持线程池和动态伸缩"
 readme = "README.md"
 requires-python = ">=3.9"
