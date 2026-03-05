@@ -1,6 +1,8 @@
 # FishAsyncTask
 
-高性能异步任务管理器，支持线程池和动态伸缩。核心模块采用 Rust 实现，提供卓越性能。
+高性能异步任务管理器，支持线程池和动态伸缩。
+
+**默认采用 Rust 核心实现**，提供卓越性能。安装即用，无需额外配置。
 
 [![GitHub](https://img.shields.io/github/stars/fishzjp/FishAsyncTask?style=social)](https://github.com/fishzjp/FishAsyncTask)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -20,7 +22,7 @@
 ## 特性
 
 ### 核心功能
-- 🚀 **Rust 核心实现**：状态存储和优先级队列使用 Rust 实现，性能提升 2-4x
+- 🚀 **Rust 核心实现（默认）**：状态存储和优先级队列使用 Rust 实现，性能提升 2-4x
 - 🔄 **动态伸缩**：根据任务队列大小自动调整工作线程数量
 - 📊 **任务状态追踪**：实时查询任务执行状态和结果
 - 🧹 **自动清理**：自动清理过期的任务状态记录
@@ -38,7 +40,7 @@
 
 ### 架构特点
 - 🎯 **单例模式**：支持多实例管理，不同业务模块可使用独立实例
-- 🌐 **Python/Rust 混合**：Python API 兼容，自动回退到纯 Python 实现
+- 🌐 **Rust 核心 + Python API**：开箱即用的 Rust 性能，Python 友好的 API
 - 📦 **批量 API**：支持批量操作，减少跨语言调用开销
 
 ## 性能
@@ -63,13 +65,9 @@ Rust 核心实现相比纯 Python 实现的性能提升：
 pip install fish-async-task
 ```
 
-### 从 GitHub 安装
+**默认包含 Rust 核心实现**，提供最佳性能。支持 Python 3.9+。
 
-```bash
-pip install git+https://github.com/fishzjp/FishAsyncTask.git
-```
-
-### 开发模式安装
+### 从源码安装（开发者）
 
 ```bash
 git clone https://github.com/fishzjp/FishAsyncTask.git
@@ -78,12 +76,11 @@ cd FishAsyncTask
 # 安装 Python 依赖
 pip install -e ".[dev,performance]"
 
-# 构建 Rust 扩展（可选，性能更好）
-cd fish_async_task_core
+# 构建并安装 Rust 核心
 pip install maturin
 maturin develop --release
 
-# 安装 pre-commit hooks
+# 安装 pre-commit hooks（可选）
 pre-commit install
 ```
 
@@ -95,16 +92,14 @@ pre-commit install
 - `locust` - 负载测试
 - `psutil`、`redis`、`huey`、`dramatiq` - 性能测试依赖
 
-### 验证 Rust 扩展
+### 验证 Rust 核心
 
-安装后可以验证 Rust 扩展是否可用：
+安装后可以验证 Rust 核心是否已启用：
 
 ```python
 from fish_async_task._rust import is_rust_available
-print(f"Rust 扩展可用: {is_rust_available()}")
+print(f"Rust 核心已启用: {is_rust_available()}")  # 应该输出 True
 ```
-
-如果 Rust 扩展不可用，库会自动回退到纯 Python 实现。
 
 > 📖 详细的安装说明请参考 [安装文档](docs/INSTALL.md)
 
