@@ -11,15 +11,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
+from fish_async_task._adapters import get_priority_queue, get_sharded_status_store
 from fish_async_task._rust import is_rust_available
-from fish_async_task._adapters import get_sharded_status_store, get_priority_queue
 from fish_async_task.task_status import ShardedTaskStatusWithExpiry
 
 # 基线数据路径
 BASELINE_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "rust_baseline",
-    "baseline_data.json"
+    "baseline_data.json",
 )
 
 
@@ -49,7 +49,9 @@ class TestStatusWriteThroughputComparison:
         rust_store = get_sharded_status_store(shard_count=16, ttl=3600)
         start = time.time()
         for i in range(count):
-            rust_store.update_status(f"rust_task_{i}", {"status": "pending", "submit_time": time.time()})
+            rust_store.update_status(
+                f"rust_task_{i}", {"status": "pending", "submit_time": time.time()}
+            )
         rust_elapsed = time.time() - start
         rust_throughput = count / rust_elapsed
 
@@ -57,7 +59,9 @@ class TestStatusWriteThroughputComparison:
         python_store = ShardedTaskStatusWithExpiry(shard_count=16, ttl=3600)
         start = time.time()
         for i in range(count):
-            python_store.update_status(f"python_task_{i}", {"status": "pending", "submit_time": time.time()})
+            python_store.update_status(
+                f"python_task_{i}", {"status": "pending", "submit_time": time.time()}
+            )
         python_elapsed = time.time() - start
         python_throughput = count / python_elapsed
 
@@ -82,14 +86,18 @@ class TestStatusWriteThroughputComparison:
             rust_store = get_sharded_status_store(shard_count=16, ttl=3600)
             start = time.time()
             for i in range(items_per_thread):
-                rust_store.update_status(f"rust_{thread_id}_{i}", {"status": "pending", "submit_time": time.time()})
+                rust_store.update_status(
+                    f"rust_{thread_id}_{i}", {"status": "pending", "submit_time": time.time()}
+                )
             return time.time() - start
 
         def python_write(thread_id: int):
             python_store = ShardedTaskStatusWithExpiry(shard_count=16, ttl=3600)
             start = time.time()
             for i in range(items_per_thread):
-                python_store.update_status(f"python_{thread_id}_{i}", {"status": "pending", "submit_time": time.time()})
+                python_store.update_status(
+                    f"python_{thread_id}_{i}", {"status": "pending", "submit_time": time.time()}
+                )
             return time.time() - start
 
         # 测试 Rust 实现
@@ -248,13 +256,17 @@ class TestMemoryUsageComparison:
         tracemalloc.start()
         python_store = ShardedTaskStatusWithExpiry(shard_count=16, ttl=3600)
         for i in range(count):
-            python_store.update_status(f"task_{i}", {"status": "pending", "submit_time": time.time()})
+            python_store.update_status(
+                f"task_{i}", {"status": "pending", "submit_time": time.time()}
+            )
         python_memory = tracemalloc.get_traced_memory()[0] / 1024  # KB
         tracemalloc.stop()
 
         per_entry_rust = rust_memory / count
         per_entry_python = python_memory / count
-        memory_reduction = (python_memory - rust_memory) / python_memory * 100 if python_memory > 0 else 0
+        memory_reduction = (
+            (python_memory - rust_memory) / python_memory * 100 if python_memory > 0 else 0
+        )
 
         print(f"\n[性能对比] 内存占用 ({count} 条目):")
         print(f"  Rust:   {rust_memory:.1f} KB ({per_entry_rust:.2f} Bytes/条目)")
@@ -283,6 +295,7 @@ class TestPriorityQueueComparison:
 
         # 测试 Python 实现
         from fish_async_task.performance.priority_queue import PrioritizedTask, PriorityTaskQueue
+
         python_queue = PriorityTaskQueue(maxsize=100000)
         import time as time_module
 

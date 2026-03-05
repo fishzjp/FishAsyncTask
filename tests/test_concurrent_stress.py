@@ -177,8 +177,9 @@ class TestConcurrentStress:
 
         # 验证所有操作都成功
         expected_operations = 100 * 100  # 100 个线程，每个 100 次操作
-        assert success_count[0] >= expected_operations * 0.99, \
-            f"操作成功率低于 99%: {success_count[0]}/{expected_operations}"
+        assert (
+            success_count[0] >= expected_operations * 0.99
+        ), f"操作成功率低于 99%: {success_count[0]}/{expected_operations}"
 
     def test_lock_contention_measurement(self):
         """测试锁竞争测量"""
@@ -204,12 +205,12 @@ class TestConcurrentStress:
         )
 
         # 验证吞吐量
-        assert metrics["throughput"] > 1000, \
-            f"吞吐量过低: {metrics['throughput']:.2f} ops/sec"
+        assert metrics["throughput"] > 1000, f"吞吐量过低: {metrics['throughput']:.2f} ops/sec"
 
         # 验证平均每次操作时间 < 10ms
-        assert metrics["avg_time_per_op"] < 10.0, \
-            f"平均操作时间过长: {metrics['avg_time_per_op']:.2f} ms"
+        assert (
+            metrics["avg_time_per_op"] < 10.0
+        ), f"平均操作时间过长: {metrics['avg_time_per_op']:.2f} ms"
 
     def test_high_frequency_updates(self):
         """测试高频率更新"""
@@ -245,8 +246,9 @@ class TestConcurrentStress:
         actual_count = store.get_task_count()
         expected_unique_tasks = num_threads * 100
         # 由于并发竞争，允许 ±5% 的误差
-        assert abs(actual_count - expected_unique_tasks) / expected_unique_tasks < 0.05, \
-            f"任务数量偏差过大: {actual_count} vs {expected_unique_tasks}"
+        assert (
+            abs(actual_count - expected_unique_tasks) / expected_unique_tasks < 0.05
+        ), f"任务数量偏差过大: {actual_count} vs {expected_unique_tasks}"
 
         # 验证总时间合理（应该 < 5 秒）
         assert elapsed < 5.0, f"更新耗时过长: {elapsed:.2f} 秒"

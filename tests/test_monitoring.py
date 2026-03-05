@@ -2,8 +2,9 @@
 性能监控模块测试
 """
 
-import pytest
 import time
+
+import pytest
 
 from fish_async_task.performance.monitoring import (
     PerformanceMetrics,

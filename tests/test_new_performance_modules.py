@@ -4,21 +4,22 @@
 测试所有新增的性能优化功能。
 """
 
-import time
-import threading
 import queue
+import threading
+import time
+
 from fish_async_task.performance import (
     PerformanceMetrics,
-    SystemHealthMonitor,
-    TaskResourceManager,
-    PriorityTaskQueue,
     PriorityTaskManager,
+    PriorityTaskQueue,
+    SystemHealthMonitor,
     TaskDependencyManager,
+    TaskResourceManager,
 )
 from fish_async_task.performance.task_cancellation import (
-    TaskCancellationManager,
     CancelEvent,
     CancellableTask,
+    TaskCancellationManager,
 )
 
 
@@ -41,7 +42,7 @@ def test_performance_metrics():
     assert result["tasks_submitted"] == 3, "任务提交数错误"
     assert result["tasks_completed"] == 2, "任务完成数错误"
     assert result["tasks_failed"] == 1, "任务失败数错误"
-    assert result["success_rate"] == 2/3, "成功率错误"
+    assert result["success_rate"] == 2 / 3, "成功率错误"
     assert result["tasks_in_progress"] == 0, "进行中任务数错误"
 
     # 测试百分位数
@@ -64,6 +65,7 @@ def test_system_health_monitor():
     print("\n=== 测试 SystemHealthMonitor ===")
 
     import logging
+
     logger = logging.getLogger(__name__)
     monitor = SystemHealthMonitor(logger)
 
@@ -92,6 +94,7 @@ def test_task_resource_manager():
     print("\n=== 测试 TaskResourceManager ===")
 
     import logging
+
     logger = logging.getLogger(__name__)
     manager = TaskResourceManager(logger, max_tracked=100)
 
@@ -143,7 +146,7 @@ def test_priority_task_queue():
             func=lambda p, t: task_func(p, t),
             args=(priority, task_id),
             kwargs={},
-            submit_time=time.time()
+            submit_time=time.time(),
         )
         pq.put(task)
 
@@ -211,6 +214,7 @@ def test_task_cancellation_manager():
     print("\n=== 测试 TaskCancellationManager ===")
 
     import logging
+
     logger = logging.getLogger(__name__)
     cancel_manager = TaskCancellationManager(logger)
 
@@ -233,9 +237,7 @@ def test_task_cancellation_manager():
     event = cancel_manager.register_task("task_1", sample_task)
 
     # 启动任务
-    task_thread = threading.Thread(
-        target=lambda: sample_task(cancel_event=event)
-    )
+    task_thread = threading.Thread(target=lambda: sample_task(cancel_event=event))
     task_thread.start()
 
     # 等待任务开始
@@ -265,10 +267,7 @@ def test_incremental_cleanup():
 
     # 添加大量任务
     for i in range(100):
-        storage.update_status(
-            f"task_{i}",
-            {"status": "completed", "end_time": time.time() - 10}
-        )
+        storage.update_status(f"task_{i}", {"status": "completed", "end_time": time.time() - 10})
 
     # 测试增量清理
     initial_count = storage.get_total_count()
@@ -291,8 +290,8 @@ def test_config_hot_reload():
     """测试配置热重载"""
     print("\n=== 测试配置热重载 ===")
 
-    import os
     import logging
+    import os
 
     # 设置测试环境变量
     os.environ["TEST_MAX_WORKERS"] = "20"
@@ -304,9 +303,7 @@ def test_config_hot_reload():
 
     # 注册配置
     config.register_config(
-        key="MAX_WORKERS",
-        parser=lambda: int(os.getenv("TEST_MAX_WORKERS", "10")),
-        default=10
+        key="MAX_WORKERS", parser=lambda: int(os.getenv("TEST_MAX_WORKERS", "10")), default=10
     )
 
     # 获取配置
@@ -355,6 +352,7 @@ def run_all_tests():
     except Exception as e:
         print(f"\n❌ 测试失败: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 

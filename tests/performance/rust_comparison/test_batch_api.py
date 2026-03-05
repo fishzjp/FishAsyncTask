@@ -5,10 +5,11 @@
 """
 
 import time
+
 import pytest
 
+from fish_async_task._adapters import get_priority_queue, get_sharded_status_store
 from fish_async_task._rust import is_rust_available
-from fish_async_task._adapters import get_sharded_status_store, get_priority_queue
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +28,9 @@ class TestStatusBatchAPI:
         store = get_sharded_status_store(shard_count=16, ttl=3600)
 
         # 准备数据
-        items = [(f"task_{i}", {"status": "pending", "submit_time": time.time()}) for i in range(count)]
+        items = [
+            (f"task_{i}", {"status": "pending", "submit_time": time.time()}) for i in range(count)
+        ]
 
         # 单独写入
         start = time.time()
@@ -42,7 +45,7 @@ class TestStatusBatchAPI:
         start = time.time()
         count_updated = 0
         # 使用适配器的批量方法（如果可用）
-        if hasattr(store, 'update_status_batch'):
+        if hasattr(store, "update_status_batch"):
             count_updated = store.update_status_batch(items)
         else:
             # 回退到单独操作
@@ -71,7 +74,9 @@ class TestStatusBatchAPI:
         for i in range(count):
             task_id = f"task_{i}"
             task_ids.append(task_id)
-            store.update_status(task_id, {"status": "completed", "submit_time": time.time(), "result": i})
+            store.update_status(
+                task_id, {"status": "completed", "submit_time": time.time(), "result": i}
+            )
 
         # 单独读取
         start = time.time()
@@ -83,7 +88,7 @@ class TestStatusBatchAPI:
 
         # 批量读取
         start = time.time()
-        if hasattr(store, 'get_status_batch'):
+        if hasattr(store, "get_status_batch"):
             batch_results = store.get_status_batch(task_ids)
         else:
             batch_results = [store.get_status(tid) for tid in task_ids]
@@ -107,13 +112,14 @@ class TestStatusBatchAPI:
 
         for batch_size in batch_sizes:
             # 准备数据
-            items = [(f"task_batch_{batch_size}_{i}",
-                     {"status": "pending", "submit_time": time.time()})
-                    for i in range(batch_size)]
+            items = [
+                (f"task_batch_{batch_size}_{i}", {"status": "pending", "submit_time": time.time()})
+                for i in range(batch_size)
+            ]
 
             # 批量写入
             start = time.time()
-            if hasattr(store, 'update_status_batch'):
+            if hasattr(store, "update_status_batch"):
                 store.update_status_batch(items)
             else:
                 for task_id, status in items:
@@ -157,7 +163,7 @@ class TestQueueBatchAPI:
 
         # 批量入队
         start = time.time()
-        if hasattr(queue, 'put_batch'):
+        if hasattr(queue, "put_batch"):
             count_added = queue.put_batch(items)
         else:
             count_added = 0
@@ -199,7 +205,7 @@ class TestQueueBatchAPI:
 
         # 批量出队
         start = time.time()
-        if hasattr(queue, 'get_batch'):
+        if hasattr(queue, "get_batch"):
             batch_results = queue.get_batch(count)
         else:
             batch_results = []
@@ -223,7 +229,7 @@ class TestQueueBatchAPI:
 
         # 批量入队
         put_items = [(i % 50, f"task_{i}", time.time()) for i in range(500)]
-        if hasattr(queue, 'put_batch'):
+        if hasattr(queue, "put_batch"):
             queue.put_batch(put_items)
         else:
             for priority, task_id, _ in put_items:
@@ -237,7 +243,7 @@ class TestQueueBatchAPI:
             if queue.empty():
                 break
 
-            if hasattr(queue, 'get_batch'):
+            if hasattr(queue, "get_batch"):
                 results = queue.get_batch(batch_size)
             else:
                 results = []
@@ -271,12 +277,13 @@ class TestBatchAPILatency:
         latencies = []
 
         for _ in range(iterations):
-            items = [(f"task_lat_{_}_{i}",
-                     {"status": "pending", "submit_time": time.time()})
-                    for i in range(batch_size)]
+            items = [
+                (f"task_lat_{_}_{i}", {"status": "pending", "submit_time": time.time()})
+                for i in range(batch_size)
+            ]
 
             start = time.perf_counter()
-            if hasattr(store, 'update_status_batch'):
+            if hasattr(store, "update_status_batch"):
                 store.update_status_batch(items)
             else:
                 for task_id, status in items:

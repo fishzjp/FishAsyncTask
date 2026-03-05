@@ -2,9 +2,10 @@
 任务资源管理器测试
 """
 
-import pytest
 import threading
 import time
+
+import pytest
 
 from fish_async_task.performance.resource_manager import (
     TaskResource,
@@ -60,6 +61,7 @@ class TestTaskResource:
 
     def test_cleanup_with_exception(self):
         """测试清理函数抛出异常"""
+
         def cleanup():
             raise ValueError("Cleanup error")
 

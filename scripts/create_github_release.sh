@@ -2,17 +2,17 @@
 # 创建GitHub Release的辅助脚本
 
 echo "=================================================="
-echo "GitHub Release创建助手 - v0.2.1"
+echo "GitHub Release创建助手 - v0.3.0"
 echo "=================================================="
 echo ""
 
 # 检查标签是否存在
-if ! git rev-parse v0.2.1 >/dev/null 2>&1; then
-    echo "❌ 错误: 标签v0.2.1不存在"
+if ! git rev-parse v0.3.0 >/dev/null 2>&1; then
+    echo "❌ 错误: 标签v0.3.0不存在"
     exit 1
 fi
 
-echo "✅ Git标签: v0.2.1"
+echo "✅ Git标签: v0.3.0"
 echo ""
 
 RELEASE_URL="https://github.com/fishzjp/FishAsyncTask/releases/new"
@@ -25,23 +25,23 @@ echo "1. 点击下方链接打开Release创建页面:"
 echo "   $RELEASE_URL"
 echo ""
 echo "2. 填写Release信息:"
-echo "   - 选择标签: v0.2.1"
-echo "   - 标题: v0.2.1 - 代码质量改进版本"
-echo "   - 描述: 复制下方内容或使用 .github/RELEASE_NOTES_0.2.1.md"
+echo "   - 选择标签: v0.3.0"
+echo "   - 标题: v0.3.0 - 代码质量改进版本"
+echo "   - 描述: 复制下方内容或使用 .github/RELEASE_NOTES_0.3.0.md"
 echo "   - 勾选: Set as the latest release"
 echo ""
 
 # 读取Release Notes
-if [ -f ".github/RELEASE_NOTES_0.2.1.md" ]; then
+if [ -f ".github/RELEASE_NOTES_0.3.0.md" ]; then
     echo "=================================================="
     echo "📄 Release Notes内容预览"
     echo "=================================================="
     echo ""
-    head -50 .github/RELEASE_NOTES_0.2.1.md
+    head -50 .github/RELEASE_NOTES_0.3.0.md
     echo ""
     echo "..."
     echo ""
-    echo "完整内容请查看: .github/RELEASE_NOTES_0.2.1.md"
+    echo "完整内容请查看: .github/RELEASE_NOTES_0.3.0.md"
     echo ""
 fi
 
@@ -50,7 +50,7 @@ echo "简化的Release描述 (可直接复制)"
 echo "=================================================="
 echo ""
 cat << 'RELEASE_EOF'
-# 🎉 FishAsyncTask v0.2.1 - 代码质量改进版本
+# 🎉 FishAsyncTask v0.3.0 - 代码质量改进版本
 
 ## 📋 概述
 
@@ -154,7 +154,7 @@ cat << 'RELEASE_EOF'
    # 一切如常,享受更好的类型检查
    ```
 
-详细迁移指南: [MIGRATION_0.2.0_TO_0.2.1.md](docs/MIGRATION_0.2.0_TO_0.2.1.md)
+详细迁移指南: [MIGRATION_0.2.0_TO_0.3.0.md](docs/MIGRATION_0.2.0_TO_0.3.0.md)
 
 ---
 
@@ -167,7 +167,7 @@ pip install fish-async-task
 
 ### 指定版本
 ```bash
-pip install fish-async-task==0.2.1
+pip install fish-async-task==0.3.0
 ```
 
 ### 使用uv安装
@@ -189,7 +189,7 @@ pip install -e .
 ```bash
 # 验证版本
 python -c "from fish_async_task import __version__; print(__version__)"
-# 应该输出: 0.2.1
+# 应该输出: 0.3.0
 
 # 运行测试
 pip install "fish-async-task[dev]"
@@ -202,7 +202,7 @@ pytest tests/ -v
 
 - [README](README.md) - 快速开始
 - [CHANGELOG](docs/CHANGELOG.md) - 完整变更日志
-- [迁移指南](docs/MIGRATION_0.2.0_TO_0.2.1.md) - 从0.2.0升级到0.2.1
+- [迁移指南](docs/MIGRATION_0.2.0_TO_0.3.0.md) - 从0.2.0升级到0.3.0
 - [项目完成报告](docs/PROJECT_COMPLETION_REPORT.md) - 本次改进总结
 
 ---

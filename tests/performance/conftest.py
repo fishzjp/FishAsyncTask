@@ -276,4 +276,3 @@ def print_test_footer(execution_time: float, **metrics: Any) -> None:
         else:
             print(f"{key}: {value}")
     print(f"{'=' * 80}\n")
-

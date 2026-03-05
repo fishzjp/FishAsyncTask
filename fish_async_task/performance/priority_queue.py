@@ -220,9 +220,9 @@ class PriorityTaskManager:
         self,
         func: Callable[..., Any],
         priority: int = 5,
-        *args: Any,
         task_id: Optional[str] = None,
-        **kwargs: Any,
+        args: tuple = (),
+        kwargs: dict = None,
     ) -> str:
         """
         提交带优先级的任务
@@ -230,9 +230,9 @@ class PriorityTaskManager:
         Args:
             func: 任务函数
             priority: 优先级（数字越小优先级越高）
-            *args: 位置参数
             task_id: 任务ID（可选，默认自动生成）
-            **kwargs: 关键字参数
+            args: 位置参数
+            kwargs: 关键字参数
 
         Returns:
             str: 任务ID
@@ -241,6 +241,9 @@ class PriorityTaskManager:
 
         if task_id is None:
             task_id = str(uuid.uuid4())
+
+        if kwargs is None:
+            kwargs = {}
 
         task = PrioritizedTask(
             priority=priority,

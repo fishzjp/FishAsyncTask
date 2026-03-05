@@ -68,19 +68,21 @@ def run_py_spy(script_path: str, output_dir: Path):
 
     # 生成火焰图
     cmd = [
-        "py-spy", "record",
-        "-o", str(output_svg),
-        "--format", "flamegraph",
-        "--", sys.executable, str(script_path)
+        "py-spy",
+        "record",
+        "-o",
+        str(output_svg),
+        "--format",
+        "flamegraph",
+        "--",
+        sys.executable,
+        str(script_path),
     ]
     print(f"运行: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
     # 生成 top 输出
-    cmd = [
-        "py-spy", "top",
-        "--", sys.executable, str(script_path)
-    ]
+    cmd = ["py-spy", "top", "--", sys.executable, str(script_path)]
     print(f"运行: {' '.join(cmd)}")
     with open(output_txt, "w") as f:
         result = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
@@ -96,11 +98,7 @@ def run_pyinstrument(script_path: str, output_dir: Path):
     print("\n=== 使用 pyinstrument 分析性能 ===")
     output_html = output_dir / "pyinstrument-report.html"
 
-    cmd = [
-        sys.executable, "-m", "pyinstrument",
-        "-o", str(output_html),
-        str(script_path)
-    ]
+    cmd = [sys.executable, "-m", "pyinstrument", "-o", str(output_html), str(script_path)]
     print(f"运行: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
@@ -112,11 +110,8 @@ def run_baseline_measurement(script_path: str, output_dir: Path):
     print("\n=== 基线性能测量 ===")
 
     import subprocess
-    result = subprocess.run(
-        [sys.executable, str(script_path)],
-        capture_output=True,
-        text=True
-    )
+
+    result = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True)
 
     output_file = output_dir / "baseline-output.txt"
     with open(output_file, "w") as f:
@@ -131,8 +126,9 @@ def run_baseline_measurement(script_path: str, output_dir: Path):
 def main():
     parser = argparse.ArgumentParser(description="建立 FishAsyncTask 性能基线")
     parser.add_argument("--tasks", type=int, default=10000, help="任务数量")
-    parser.add_argument("--output", type=str, default="tests/performance/rust_baseline",
-                       help="输出目录")
+    parser.add_argument(
+        "--output", type=str, default="tests/performance/rust_baseline", help="输出目录"
+    )
     parser.add_argument("--py-spy", action="store_true", help="运行 py-spy 分析")
     parser.add_argument("--pyinstrument", action="store_true", help="运行 pyinstrument 分析")
     parser.add_argument("--all", action="store_true", help="运行所有分析")

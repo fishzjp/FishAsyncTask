@@ -24,7 +24,6 @@ from fish_async_task.task_status import (
 )
 from fish_async_task.types import TaskStatus, TaskStatusDict
 
-
 # 基线数据保存路径
 BASELINE_FILE = os.path.join(os.path.dirname(__file__), "baseline_data.json")
 
@@ -358,8 +357,7 @@ class TestBatchOperations:
         # 准备批量更新数据
         count = 10000
         updates = [
-            (f"task_{i}", {"status": "pending", "submit_time": time.time()})
-            for i in range(count)
+            (f"task_{i}", {"status": "pending", "submit_time": time.time()}) for i in range(count)
         ]
 
         # 模拟批量更新（Python 实现）

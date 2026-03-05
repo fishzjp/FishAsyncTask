@@ -170,9 +170,7 @@ class TestEndToEndWorkflow:
         # 模拟工作负载增加
         for i in range(100):
             task_id = f"task-{i}"
-            task_store.update_status(
-                task_id, {"status": "pending", "submit_time": time.time()}
-            )
+            task_store.update_status(task_id, {"status": "pending", "submit_time": time.time()})
 
         # 检查是否需要扩展
         queue_size = task_store.get_task_count()
@@ -207,9 +205,7 @@ class TestEndToEndWorkflow:
         task_store = ShardedTaskStatus(shard_count=16)
         batch_updater = BatchedStatusUpdater(buffer_size=20, flush_interval=0.5)
         cleanup_store = TaskStatusWithExpiry(ttl=300)
-        scaling_manager = AdaptiveWorkerManager(
-            min_workers=2, max_workers=8, queue_threshold=30
-        )
+        scaling_manager = AdaptiveWorkerManager(min_workers=2, max_workers=8, queue_threshold=30)
 
         # 2. 模拟工作负载
         num_tasks = 200

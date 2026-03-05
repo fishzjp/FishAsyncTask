@@ -15,7 +15,6 @@ import pytest
 from fish_async_task.task_status import ShardedTaskStatusWithExpiry
 from fish_async_task.types import TaskStatusDict
 
-
 BASELINE_FILE = os.path.join(os.path.dirname(__file__), "baseline_memory.json")
 
 
@@ -167,7 +166,9 @@ class TestMemoryBaseline:
             }
             results_list.append(result)
 
-            print(f"  分片数 {shard_count}: {current / 1024:.2f} KB 总计, {per_entry_bytes:.2f} Bytes/条目")
+            print(
+                f"  分片数 {shard_count}: {current / 1024:.2f} KB 总计, {per_entry_bytes:.2f} Bytes/条目"
+            )
 
         results = {
             "test_name": "sharding_overhead",

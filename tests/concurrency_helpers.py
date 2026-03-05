@@ -60,13 +60,15 @@ def assert_no_data_corruption(
     Raises:
         AssertionError: 如果数据损坏
     """
-    assert len(original_data) == len(accessed_data), \
-        f"数据长度不匹配: 原始 {len(original_data)} vs 访问后 {len(accessed_data)}"
+    assert len(original_data) == len(
+        accessed_data
+    ), f"数据长度不匹配: 原始 {len(original_data)} vs 访问后 {len(accessed_data)}"
 
     for key in original_data:
         assert key in accessed_data, f"键丢失: {key}"
-        assert original_data[key] == accessed_data[key], \
-            f"值不匹配: 键 {key}, 原始 {original_data[key]} vs 访问后 {accessed_data[key]}"
+        assert (
+            original_data[key] == accessed_data[key]
+        ), f"值不匹配: 键 {key}, 原始 {original_data[key]} vs 访问后 {accessed_data[key]}"
 
 
 def detect_deadlock(
@@ -85,6 +87,7 @@ def detect_deadlock(
     Returns:
         True 如果检测到死锁（超时），False 否则
     """
+
     def worker() -> bool:
         """工作线程函数"""
         try:

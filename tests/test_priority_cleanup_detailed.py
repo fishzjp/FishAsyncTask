@@ -2,8 +2,9 @@
 优先级队列清理模块测试
 """
 
-import pytest
 import time
+
+import pytest
 
 from fish_async_task.performance.priority_cleanup import TaskStatusWithExpiry
 
@@ -110,11 +111,10 @@ class TestTaskStatusWithExpiry:
 
         # 添加10个任务
         for i in range(10):
-            store.add_task(f"task{i}", {
-                "status": "completed",
-                "end_time": now,
-                "submit_time": now - i  # 不同的提交时间
-            })
+            store.add_task(
+                f"task{i}",
+                {"status": "completed", "end_time": now, "submit_time": now - i},  # 不同的提交时间
+            )
 
         count = store.enforce_max_count(5)
         assert count == 5
@@ -127,10 +127,9 @@ class TestTaskStatusWithExpiry:
 
         # 添加任务，时间递增
         for i in range(5):
-            store.add_task(f"task{i}", {
-                "status": "pending",
-                "submit_time": now + i  # 最新的时间戳更大
-            })
+            store.add_task(
+                f"task{i}", {"status": "pending", "submit_time": now + i}  # 最新的时间戳更大
+            )
 
         # 限制为3个，应该删除最旧的2个（task0, task1）
         count = store.enforce_max_count(3)
@@ -190,10 +189,7 @@ class TestTaskStatusWithExpiry:
 
         def add_tasks(thread_id):
             for i in range(50):
-                store.add_task(f"task{thread_id}_{i}", {
-                    "status": "pending",
-                    "end_time": now + i
-                })
+                store.add_task(f"task{thread_id}_{i}", {"status": "pending", "end_time": now + i})
 
         threads = [threading.Thread(target=add_tasks, args=(i,)) for i in range(2)]
         for t in threads:
