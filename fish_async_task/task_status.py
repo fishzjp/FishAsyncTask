@@ -296,6 +296,7 @@ class ShardedTaskStatusWithExpiry:
         """
         self.shard_count = shard_count
         self.ttl = ttl
+        self._resizing_lock = threading.Lock()
 
         # 每个分片包含：状态字典、读写锁、过期时间堆
         self.shards: List[Dict[str, TaskStatusDict]] = [dict() for _ in range(shard_count)]
@@ -736,64 +737,59 @@ class ShardedTaskStatusWithExpiry:
         if new_shard_count == self.shard_count:
             return True
 
-        # 收集所有当前任务状态
-        all_tasks: Dict[str, TaskStatusDict] = {}
-        acquired_locks: List[ReadWriteLock] = []
-
-        try:
-            # 获取所有写锁
-            for rw_lock in self.rw_locks:
-                rw_lock.acquire_write()
-                acquired_locks.append(rw_lock)
-
-            # 收集所有任务
-            for shard in self.shards:
-                all_tasks.update(shard)
-
-        finally:
-            # 释放所有写锁
-            for rw_lock in reversed(acquired_locks):
-                try:
-                    rw_lock.release_write()
-                except RuntimeError as e:
-                    # 锁状态不一致，记录警告
-                    logging.getLogger(__name__).warning(
-                        f"释放锁时遇到 RuntimeError: {e}，可能锁状态不一致"
-                    )
-                except Exception as e:
-                    # 其他异常也记录
-                    logging.getLogger(__name__).error(
-                        f"释放锁时遇到未预期异常 [{type(e).__name__}]: {e}"
-                    )
-
-        # 创建新的分片结构
-        new_shards: List[Dict[str, TaskStatusDict]] = [dict() for _ in range(new_shard_count)]
-        new_rwlocks: List[ReadWriteLock] = [ReadWriteLock() for _ in range(new_shard_count)]
-        new_expiry_heaps: List[List[Tuple[float, str]]] = [[] for _ in range(new_shard_count)]
-
-        # 重新分配任务到新的分片
-        for task_id, status in all_tasks.items():
-            new_shard_idx = hash(task_id) % new_shard_count
-            new_shards[new_shard_idx][task_id] = status
-
-            # 重新计算过期时间堆
-            if status.get("status") in ("completed", "failed"):
-                end_time = status.get("end_time")
-                if end_time:
-                    expiry_time = end_time + self.ttl
-                    heapq.heappush(new_expiry_heaps[new_shard_idx], (expiry_time, task_id))
-
-        # 原子性地替换旧的分片结构
+        # 在 _resizing_lock 保护下执行整个操作，确保数据一致性
         with self._resizing_lock:
+            all_tasks: Dict[str, TaskStatusDict] = {}
+            acquired_locks: List[ReadWriteLock] = []
+
+            try:
+                # 获取所有写锁
+                for rw_lock in self.rw_locks:
+                    rw_lock.acquire_write()
+                    acquired_locks.append(rw_lock)
+
+                # 收集所有任务
+                for shard in self.shards:
+                    all_tasks.update(shard)
+
+            finally:
+                # 释放所有写锁
+                for rw_lock in reversed(acquired_locks):
+                    try:
+                        rw_lock.release_write()
+                    except RuntimeError as e:
+                        logging.getLogger(__name__).warning(
+                            f"释放锁时遇到 RuntimeError: {e}，可能锁状态不一致"
+                        )
+                    except Exception as e:
+                        logging.getLogger(__name__).error(
+                            f"释放锁时遇到未预期异常 [{type(e).__name__}]: {e}"
+                        )
+
+            # 创建新的分片结构
+            new_shards: List[Dict[str, TaskStatusDict]] = [dict() for _ in range(new_shard_count)]
+            new_rwlocks: List[ReadWriteLock] = [ReadWriteLock() for _ in range(new_shard_count)]
+            new_expiry_heaps: List[List[Tuple[float, str]]] = [[] for _ in range(new_shard_count)]
+
+            # 重新分配任务到新的分片
+            for task_id, status in all_tasks.items():
+                new_shard_idx = hash(task_id) % new_shard_count
+                new_shards[new_shard_idx][task_id] = status
+
+                # 重新计算过期时间堆
+                if status.get("status") in ("completed", "failed"):
+                    end_time = status.get("end_time")
+                    if end_time:
+                        expiry_time = end_time + self.ttl
+                        heapq.heappush(new_expiry_heaps[new_shard_idx], (expiry_time, task_id))
+
+            # 原子性地替换旧的分片结构
             self.shards = new_shards
             self.rw_locks = new_rwlocks
             self.expiry_heaps = new_expiry_heaps
             self.shard_count = new_shard_count
 
         return True
-
-    # 添加重配置锁（用于resize操作）
-    _resizing_lock = threading.Lock()
 
 
 class BatchedStatusUpdater:
@@ -943,7 +939,9 @@ class BatchedStatusUpdater:
             if not self._batch:
                 return
 
-            if time.time() - self._last_flush >= self.flush_interval:
+            now = time.time()
+            if now - self._last_flush >= self.flush_interval:
+                self._last_flush = now
                 self._flush()
 
     def force_flush(self) -> int:

@@ -1,22 +1,32 @@
 //! 优先级队列实现
 //!
 //! 使用 BinaryHeap 实现线程安全的优先级队列。
+//! 使用 Condvar 替代 busy-wait，使用 lazy deletion 优化 remove 操作。
 
 use crate::types::PrioritizedTask;
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// 优先级任务队列内部状态
+struct QueueState {
+    queue: std::collections::BinaryHeap<PrioritizedTask>,
+    task_ids: HashSet<String>,
+    /// 已删除的任务 ID（lazy deletion）
+    cancelled: HashSet<String>,
+}
+
 /// 优先级任务队列
 ///
 /// 线程安全的优先级队列，支持阻塞操作。
+/// 使用 Condvar 替代 busy-wait 实现高效阻塞获取。
+/// 使用 lazy deletion 避免重建整个堆。
 #[pyclass]
 pub struct PyPriorityTaskQueue {
-    queue: Arc<Mutex<std::collections::BinaryHeap<PrioritizedTask>>>,
-    task_ids: Arc<Mutex<HashSet<String>>>,
+    state: Arc<(Mutex<QueueState>, Condvar)>,
     maxsize: usize,
 }
 
@@ -28,12 +38,14 @@ impl PyPriorityTaskQueue {
     ///     maxsize: 最大队列大小，0 表示无限制
     #[new]
     fn new(maxsize: usize) -> PyResult<Self> {
-        let queue = Arc::new(Mutex::new(std::collections::BinaryHeap::new()));
-        let task_ids = Arc::new(Mutex::new(HashSet::new()));
+        let state = QueueState {
+            queue: std::collections::BinaryHeap::new(),
+            task_ids: HashSet::new(),
+            cancelled: HashSet::new(),
+        };
 
         Ok(Self {
-            queue,
-            task_ids,
+            state: Arc::new((Mutex::new(state), Condvar::new())),
             maxsize,
         })
     }
@@ -57,27 +69,22 @@ impl PyPriorityTaskQueue {
         _timeout: Option<f64>,
     ) -> PyResult<()> {
         py.allow_threads(|| {
+            let (lock, cvar) = &*self.state;
+            let mut state = lock.lock();
+
             // 检查队列是否已满
-            {
-                let ids = self.task_ids.lock();
-                if self.maxsize > 0 && ids.len() >= self.maxsize && !block {
-                    return Err(PyErr::new::<PyException, _>("Queue is full".to_string()));
-                }
+            if self.maxsize > 0 && state.task_ids.len() >= self.maxsize && !block {
+                return Err(PyErr::new::<PyException, _>("Queue is full".to_string()));
             }
 
-            // 添加到队列
-            {
-                let task = PrioritizedTask {
-                    priority,
-                    task_id: task_id.clone(),
-                    submit_time,
-                };
-                let mut queue = self.queue.lock();
-                queue.push(task);
-                let mut ids = self.task_ids.lock();
-                ids.insert(task_id);
-            }
-
+            let task = PrioritizedTask {
+                priority,
+                task_id: task_id.clone(),
+                submit_time,
+            };
+            state.queue.push(task);
+            state.task_ids.insert(task_id);
+            cvar.notify_one();
             Ok(())
         })
     }
@@ -93,45 +100,44 @@ impl PyPriorityTaskQueue {
     #[pyo3(signature = (block=true, timeout=None))]
     fn get(&self, py: Python, block: bool, timeout: Option<f64>) -> PyResult<String> {
         py.allow_threads(|| {
-            let queue = self.queue.clone();
-            let task_ids = self.task_ids.clone();
+            let (lock, cvar) = &*self.state;
+            let mut state = lock.lock();
 
             if block {
-                let duration = timeout.map(Duration::from_secs_f64);
-                let start = std::time::Instant::now();
+                let deadline = timeout.map(Duration::from_secs_f64).map(|d| {
+                    std::time::Instant::now() + d
+                });
 
                 loop {
-                    {
-                        let mut q = queue.lock();
-                        if let Some(task) = q.pop() {
-                            let mut ids = task_ids.lock();
-                            ids.remove(&task.task_id);
-                            return Ok(task.task_id);
-                        }
+                    if let Some(task_id) = pop_valid_task(&mut state) {
+                        return Ok(task_id);
                     }
 
-                    if let Some(d) = duration {
-                        if start.elapsed() >= d {
-                            return Err(PyErr::new::<PyException, _>("Queue is empty".to_string()));
+                    match deadline {
+                        Some(dl) => {
+                            let now = std::time::Instant::now();
+                            if now >= dl {
+                                return Err(PyErr::new::<PyException, _>("Queue is empty".to_string()));
+                            }
+                            let remaining = dl - now;
+                            cvar.wait_for(&mut state, remaining);
+                        }
+                        None => {
+                            cvar.wait(&mut state);
                         }
                     }
-
-                    std::thread::sleep(Duration::from_millis(1));
                 }
+            } else if let Some(task_id) = pop_valid_task(&mut state) {
+                Ok(task_id)
             } else {
-                let mut q = queue.lock();
-                if let Some(task) = q.pop() {
-                    let mut ids = task_ids.lock();
-                    ids.remove(&task.task_id);
-                    Ok(task.task_id)
-                } else {
-                    Err(PyErr::new::<PyException, _>("Queue is empty".to_string()))
-                }
+                Err(PyErr::new::<PyException, _>("Queue is empty".to_string()))
             }
         })
     }
 
     /// 从队列移除指定任务
+    ///
+    /// 使用 lazy deletion，仅标记删除，在下次 get 时跳过。
     ///
     /// Args:
     ///     task_id: 要移除的任务ID
@@ -139,18 +145,11 @@ impl PyPriorityTaskQueue {
     /// Returns:
     ///     是否成功移除
     fn remove(&self, task_id: &str) -> PyResult<bool> {
-        let mut queue = self.queue.lock();
-        let mut ids = self.task_ids.lock();
+        let (lock, _) = &*self.state;
+        let mut state = lock.lock();
 
-        if ids.remove(task_id) {
-            // 重建队列（不包括被移除的任务）
-            let mut new_queue = std::collections::BinaryHeap::new();
-            while let Some(task) = queue.pop() {
-                if task.task_id != task_id {
-                    new_queue.push(task);
-                }
-            }
-            *queue = new_queue;
+        if state.task_ids.remove(task_id) {
+            state.cancelled.insert(task_id.to_string());
             Ok(true)
         } else {
             Ok(false)
@@ -159,14 +158,16 @@ impl PyPriorityTaskQueue {
 
     /// 获取队列大小
     fn qsize(&self) -> PyResult<usize> {
-        let ids = self.task_ids.lock();
-        Ok(ids.len())
+        let (lock, _) = &*self.state;
+        let state = lock.lock();
+        Ok(state.task_ids.len())
     }
 
     /// 检查队列是否为空
     fn empty(&self) -> PyResult<bool> {
-        let ids = self.task_ids.lock();
-        Ok(ids.is_empty())
+        let (lock, _) = &*self.state;
+        let state = lock.lock();
+        Ok(state.task_ids.is_empty())
     }
 
     /// 检查队列是否已满
@@ -174,16 +175,19 @@ impl PyPriorityTaskQueue {
         if self.maxsize == 0 {
             return Ok(false);
         }
-        let ids = self.task_ids.lock();
-        Ok(ids.len() >= self.maxsize)
+        let (lock, _) = &*self.state;
+        let state = lock.lock();
+        Ok(state.task_ids.len() >= self.maxsize)
     }
 
     /// 清空队列
     fn clear(&self) -> PyResult<()> {
-        let mut queue = self.queue.lock();
-        let mut ids = self.task_ids.lock();
-        queue.clear();
-        ids.clear();
+        let (lock, cvar) = &*self.state;
+        let mut state = lock.lock();
+        state.queue.clear();
+        state.task_ids.clear();
+        state.cancelled.clear();
+        cvar.notify_all();
         Ok(())
     }
 
@@ -196,13 +200,12 @@ impl PyPriorityTaskQueue {
     ///     成功添加的数量
     fn put_batch(&self, py: Python, items: Vec<(i32, String, f64)>) -> PyResult<usize> {
         py.allow_threads(|| {
+            let (lock, cvar) = &*self.state;
+            let mut state = lock.lock();
             let mut count = 0;
-            let mut queue = self.queue.lock();
-            let mut ids = self.task_ids.lock();
 
             for (priority, task_id, submit_time) in items {
-                // 检查队列是否已满
-                if self.maxsize > 0 && ids.len() >= self.maxsize {
+                if self.maxsize > 0 && state.task_ids.len() >= self.maxsize {
                     break;
                 }
 
@@ -211,9 +214,13 @@ impl PyPriorityTaskQueue {
                     task_id: task_id.clone(),
                     submit_time,
                 };
-                queue.push(task);
-                ids.insert(task_id);
+                state.queue.push(task);
+                state.task_ids.insert(task_id);
                 count += 1;
+            }
+
+            if count > 0 {
+                cvar.notify_all();
             }
 
             Ok(count)
@@ -230,22 +237,32 @@ impl PyPriorityTaskQueue {
     #[pyo3(signature = (max_count=None))]
     fn get_batch(&self, py: Python, max_count: Option<usize>) -> PyResult<Vec<String>> {
         py.allow_threads(|| {
-            let mut queue = self.queue.lock();
-            let mut ids = self.task_ids.lock();
+            let (lock, _) = &*self.state;
+            let mut state = lock.lock();
             let mut result = Vec::new();
-
             let limit = max_count.unwrap_or(usize::MAX);
 
             while result.len() < limit {
-                if let Some(task) = queue.pop() {
-                    ids.remove(&task.task_id);
-                    result.push(task.task_id);
-                } else {
-                    break;
+                match pop_valid_task(&mut state) {
+                    Some(task_id) => result.push(task_id),
+                    None => break,
                 }
             }
 
             Ok(result)
         })
     }
+}
+
+/// 从队列中弹出一个有效的（未被 lazy deletion 标记的）任务
+fn pop_valid_task(state: &mut QueueState) -> Option<String> {
+    while let Some(task) = state.queue.pop() {
+        if state.cancelled.remove(&task.task_id) {
+            // 跳过已被 lazy deletion 标记的任务
+            continue;
+        }
+        state.task_ids.remove(&task.task_id);
+        return Some(task.task_id);
+    }
+    None
 }

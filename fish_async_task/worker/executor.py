@@ -73,6 +73,10 @@ class TaskExecutor:
         self._timed_out_tasks: Dict[str, float] = {}
         self._timed_out_tasks_lock = threading.Lock()
 
+        # 任务取消事件（用于超时后通知任务线程）
+        self._task_cancel_events: Dict[str, threading.Event] = {}
+        self._task_cancel_events_lock = threading.Lock()
+
         # 清理回调列表（用于自定义清理逻辑）
         self._cleanup_callbacks: List[Callable[[str], None]] = []
 
@@ -177,6 +181,14 @@ class TaskExecutor:
         with self._batch_lock:
             return len(self._batch_updates)
 
+    def _record_task_failure(
+        self, task_id: str, start_time: float, error: str
+    ) -> None:
+        """记录任务失败状态"""
+        self._queue_status_update(
+            task_id, "failed", start_time=start_time, end_time=time.time(), error=error
+        )
+
     def execute_task(self, task: TaskTuple) -> None:
         """
         执行任务
@@ -188,14 +200,12 @@ class TaskExecutor:
         start_time = time.time()
 
         try:
-            # 更新任务状态为running（使用批量队列）
             self._queue_status_update(task_id, "running", start_time=start_time)
             self.logger.debug("任务 %s 开始执行", task_id)
 
-            # 执行任务（支持超时）
             result = self._execute_with_timeout(task_id, func, args, kwargs)
+            self._cleanup_cancel_event(task_id)
 
-            # 更新任务状态为completed（使用批量队列）
             end_time = time.time()
             self._queue_status_update(
                 task_id, "completed", start_time=start_time, end_time=end_time, result=result
@@ -203,49 +213,27 @@ class TaskExecutor:
             self.logger.debug("任务 %s 执行完成，耗时 %.2f秒", task_id, end_time - start_time)
 
         except KeyboardInterrupt:
-            # 键盘中断，标记为失败
-            end_time = time.time()
-            self._queue_status_update(
-                task_id, "failed", start_time=start_time, end_time=end_time, error="任务被中断"
-            )
+            self._record_task_failure(task_id, start_time, "任务被中断")
             self.logger.warning(f"任务 {task_id} 被中断")
             raise
         except SystemExit:
-            # 系统退出，重新抛出
             raise
         except TimeoutError as e:
-            # 超时异常，标记为失败
-            end_time = time.time()
-            self._queue_status_update(
-                task_id, "failed", start_time=start_time, end_time=end_time, error=str(e)
-            )
+            self._record_task_failure(task_id, start_time, str(e))
             self.logger.warning(f"任务 {task_id} 执行超时: {e}")
         except (IOError, OSError, ConnectionError) as e:
-            # I/O 相关异常，可能是临时性问题
-            end_time = time.time()
-            self._queue_status_update(
-                task_id, "failed", start_time=start_time, end_time=end_time, error=str(e)
-            )
+            self._record_task_failure(task_id, start_time, str(e))
             self.logger.warning(f"任务 {task_id} 遇到 I/O 异常 [{type(e).__name__}]: {e}")
         except (MemoryError, ResourceWarning) as e:
-            # 资源相关异常
-            end_time = time.time()
-            self._queue_status_update(
-                task_id, "failed", start_time=start_time, end_time=end_time, error=str(e)
-            )
+            self._record_task_failure(task_id, start_time, str(e))
             self.logger.error(
                 f"任务 {task_id} 遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True
             )
         except Exception as e:
-            # 记录任务执行异常
-            end_time = time.time()
-            self._queue_status_update(
-                task_id, "failed", start_time=start_time, end_time=end_time, error=str(e)
-            )
+            self._record_task_failure(task_id, start_time, str(e))
             error_type = type(e).__name__
             self.logger.error(f"任务 {task_id} 执行失败 [{error_type}]: {e}", exc_info=True)
         finally:
-            # 尝试刷新批量更新（基于时间间隔）
             self._check_and_flush_batch()
 
     def _execute_with_timeout(
@@ -292,6 +280,7 @@ class TaskExecutor:
             return func(*args, **kwargs)
 
         result_container = self._create_result_container()
+        self._register_cancel_event(task_id)
         task_thread = self._create_and_start_task_thread(func, args, kwargs, result_container)
         self._wait_for_task_completion(task_thread, task_timeout, task_id, result_container)
 
@@ -341,6 +330,8 @@ class TaskExecutor:
 
         if not result_container["completed"]:
             self._handle_task_timeout(task_id, task_timeout)
+        else:
+            self._cleanup_cancel_event(task_id)
 
     def _handle_task_timeout(self, task_id: str, task_timeout: float) -> None:
         """处理任务超时"""
@@ -350,6 +341,7 @@ class TaskExecutor:
         )
 
         self._track_timed_out_task(task_id)
+        self._set_cancel_event(task_id)
         self._trigger_cleanup_callbacks(task_id)
 
         raise TimeoutError(f"任务 {task_id} 执行超时（{task_timeout}秒）")
@@ -371,6 +363,41 @@ class TaskExecutor:
             # 添加新的超时任务记录
             if len(self._timed_out_tasks) < self.MAX_TRACKED_TIMEOUTS:
                 self._timed_out_tasks[task_id] = current_time
+
+    def _register_cancel_event(self, task_id: str) -> threading.Event:
+        """注册任务取消事件"""
+        event = threading.Event()
+        with self._task_cancel_events_lock:
+            self._task_cancel_events[task_id] = event
+        return event
+
+    def _set_cancel_event(self, task_id: str) -> None:
+        """设置任务取消事件，通知任务线程应停止"""
+        with self._task_cancel_events_lock:
+            event = self._task_cancel_events.get(task_id)
+            if event is not None:
+                event.set()
+
+    def _cleanup_cancel_event(self, task_id: str) -> None:
+        """清理已完成任务的取消事件"""
+        with self._task_cancel_events_lock:
+            self._task_cancel_events.pop(task_id, None)
+
+    def get_cancel_event(self, task_id: str) -> Optional[threading.Event]:
+        """
+        获取任务的取消事件
+
+        任务函数可通过检查此事件来实现协作式取消。
+        当任务超时时，取消事件会被设置（set）。
+
+        Args:
+            task_id: 任务ID
+
+        Returns:
+            Optional[threading.Event]: 取消事件，如果任务不存在则返回None
+        """
+        with self._task_cancel_events_lock:
+            return self._task_cancel_events.get(task_id)
 
     def add_cleanup_callback(self, callback: Callable[[str], None]) -> None:
         """

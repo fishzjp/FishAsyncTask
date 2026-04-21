@@ -145,4 +145,3 @@ jobs:
     - name: Run audit
       run: |
         cargo audit
-      continue-on-error: true

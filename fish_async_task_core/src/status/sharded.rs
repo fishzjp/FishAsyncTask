@@ -366,7 +366,7 @@ impl PyShardedTaskStatus {
         // 使用 SystemTime 获取当前 Unix 时间戳
         let now_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs_f64();
 
         let mut cleaned_count = 0;
@@ -395,7 +395,7 @@ impl PyShardedTaskStatus {
                     break;
                 }
 
-                let task_id = heap.pop().unwrap().1;
+                let Some((_, task_id)) = heap.pop() else { continue };
                 if shard.remove(&task_id).is_some() {
                     cleaned_count += 1;
                 }

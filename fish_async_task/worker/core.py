@@ -272,6 +272,29 @@ class WorkerManager:
             return self._adaptive_manager.get_stats()
         return None
 
+    def _try_exit_if_above_min(self, thread_name: str) -> bool:
+        """
+        尝试从线程列表中移除当前线程（仅在高于 min_workers 时）
+
+        通过在锁内原子性地检查数量并移除，防止多线程同时退出导致低于 min_workers。
+
+        Args:
+            thread_name: 线程名称
+
+        Returns:
+            bool: 如果成功移除并退出返回True，否则返回False
+        """
+        with self.threads_lock:
+            if len(self.worker_threads) <= self.min_workers:
+                self.logger.debug(f"线程 {thread_name} 已达到最小线程数限制，不退出")
+                return True  # 返回 True 表示不需要继续检查，但不退出
+            current_thread = threading.current_thread()
+            if current_thread in self.worker_threads:
+                self.worker_threads.remove(current_thread)
+                self.logger.info(f"空闲线程退出: {thread_name}")
+                return True
+            return False
+
     def _check_idle_timeout(self, thread_name: str, idle_start: Optional[float]) -> bool:
         """
         检查空闲超时，如果超时则尝试退出线程
@@ -295,36 +318,63 @@ class WorkerManager:
                 current_workers = len(self.worker_threads)
                 queue_size = self.task_queue.qsize()
 
-                if self._adaptive_manager.should_scale_down(
-                    current_workers, queue_size, idle_duration
-                ):
-                    # 执行缩容
-                    current_thread = threading.current_thread()
-                    if len(self.worker_threads) > self.min_workers:
-                        if current_thread in self.worker_threads:
-                            self.worker_threads.remove(current_thread)
-                            self.logger.info(f"空闲线程退出（自适应）: {thread_name}")
-                            return True
-                    else:
-                        self.logger.debug(f"线程 {thread_name} 已达到最小线程数限制，不退出")
-                        return True
+            if self._adaptive_manager.should_scale_down(
+                current_workers, queue_size, idle_duration
+            ):
+                return self._try_exit_if_above_min(thread_name)
             return False
 
         # 原始策略：使用 idle_timeout
         if idle_duration >= self.idle_timeout:
-            # 检查是否可以退出（保持最小线程数）
-            # 在锁内检查并移除，避免竞态条件
-            with self.threads_lock:
-                current_thread = threading.current_thread()
-                # 再次检查线程数，确保在锁内的一致性
-                if len(self.worker_threads) > self.min_workers:
-                    # 检查当前线程是否仍在列表中
-                    if current_thread in self.worker_threads:
-                        self.worker_threads.remove(current_thread)
-                        self.logger.info(f"空闲线程退出: {thread_name}")
-                        return True
-                else:
-                    self.logger.debug(f"线程 {thread_name} 已达到最小线程数限制，不退出")
+            return self._try_exit_if_above_min(thread_name)
+        return False
+
+    # 编程错误类型列表，遇到时快速失败
+    _PROGRAMMING_ERRORS = frozenset({
+        "TypeError", "AttributeError", "ValueError", "KeyError", "IndexError",
+    })
+
+    def _handle_task_exception(self, e: Exception, thread_name: str) -> bool:
+        """
+        处理任务执行异常
+
+        Args:
+            e: 捕获的异常
+            thread_name: 线程名称
+
+        Returns:
+            bool: True 表示应该退出循环，False 表示继续运行
+        """
+        if isinstance(e, KeyboardInterrupt):
+            self.logger.info(f"工作线程收到中断信号: {thread_name}")
+            return True
+        if isinstance(e, SystemExit):
+            raise
+        if isinstance(e, queue.Full):
+            self.logger.warning(f"工作线程意外遇到队列满异常: {thread_name}")
+            return False
+        if isinstance(e, TimeoutError):
+            self.logger.warning(f"工作线程任务执行超时: {e}")
+            return False
+        if isinstance(e, (IOError, OSError, ConnectionError)):
+            self.logger.warning(f"工作线程遇到 I/O 相关异常 [{type(e).__name__}]: {e}")
+            return False
+        if isinstance(e, (MemoryError, ResourceWarning)):
+            self.logger.error(f"工作线程遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True)
+            return False
+        if isinstance(e, RuntimeError):
+            self.logger.error(
+                f"工作线程遇到运行时异常 [{type(e).__name__}]: {e}", exc_info=True
+            )
+            return False
+
+        error_type = type(e).__name__
+        if error_type in self._PROGRAMMING_ERRORS:
+            self.logger.critical(
+                f"工作线程遇到编程错误 [{error_type}]: {e}，建议修复代码", exc_info=True
+            )
+            raise
+        self.logger.error(f"工作线程执行未预期异常 [{error_type}]: {e}", exc_info=True)
         return False
 
     def _worker_loop(self) -> None:
@@ -333,8 +383,6 @@ class WorkerManager:
 
         从任务队列中获取任务并执行。当空闲时间超过 idle_timeout 且
         当前线程数大于 min_workers 时，线程会自动退出以节省资源。
-        同时记录任务执行时间用于自适应管理。
-        使用退出事件确认机制，确保线程完全退出后才从列表中移除。
         """
         thread_name = threading.current_thread().name
         self.logger.debug("工作线程启动: %s", thread_name)
@@ -345,83 +393,31 @@ class WorkerManager:
                 try:
                     task = self.task_queue.get(timeout=self.QUEUE_GET_TIMEOUT)
 
-                    # 退出信号
                     if task is None:
                         self.task_queue.task_done()
                         break
 
                     idle_start = None
                     task_start_time = time.time()
-
-                    # 执行任务
                     self._execute_task(task)
                     self.task_queue.task_done()
-
-                    # 记录任务执行时间（用于自适应管理）
-                    task_end_time = time.time()
-                    self.record_task_time(task_end_time - task_start_time)
+                    self.record_task_time(time.time() - task_start_time)
 
                 except queue.Empty:
-                    now = time.time()
                     if idle_start is None:
-                        idle_start = now
-                        # 更新空闲开始时间（用于自适应管理）
+                        idle_start = time.time()
                         if self._adaptive_manager is not None:
                             self._idle_start_time = idle_start
                     elif self._check_idle_timeout(thread_name, idle_start):
                         break
                     continue
 
-                except KeyboardInterrupt:
-                    # 键盘中断，正常退出
-                    self.logger.info(f"工作线程收到中断信号: {thread_name}")
-                    break
-                except SystemExit:
-                    # 系统退出，重新抛出，不捕获
-                    raise
-                except queue.Full:
-                    # 队列满异常，不应该在工作线程中出现，记录警告
-                    self.logger.warning(f"工作线程意外遇到队列满异常: {thread_name}")
-                except TimeoutError as e:
-                    # 超时异常，记录警告但继续运行
-                    self.logger.warning(f"工作线程任务执行超时: {e}")
-                except (IOError, OSError, ConnectionError) as e:
-                    # I/O 相关异常，可能是临时性问题，记录警告并继续
-                    self.logger.warning(f"工作线程遇到 I/O 相关异常 [{type(e).__name__}]: {e}")
-                except (MemoryError, ResourceWarning) as e:
-                    # 资源相关异常，记录错误但尝试继续运行
-                    self.logger.error(f"工作线程遇到资源异常 [{type(e).__name__}]: {e}", exc_info=True)
-                except (TimeoutError, RuntimeError) as e:
-                    # 超时和运行时错误，记录错误但继续运行
-                    self.logger.error(
-                        f"工作线程遇到运行时异常 [{type(e).__name__}]: {e}", exc_info=True
-                    )
                 except Exception as e:
-                    # 记录未预期的异常，但不中断线程运行
-                    # 这确保了单个任务的异常不会影响整个线程池的运行
-                    error_type = type(e).__name__
-                    # 注意：这里捕获所有异常是为了保持线程池运行
-                    # 如果是编程错误（TypeError、AttributeError等），应该修复而不是掩盖
-                    if error_type in (
-                        "TypeError",
-                        "AttributeError",
-                        "ValueError",
-                        "KeyError",
-                        "IndexError",
-                    ):
-                        # 编程错误应该向上传播，以便开发时发现
-                        self.logger.critical(
-                            f"工作线程遇到编程错误 [{error_type}]: {e}，建议修复代码", exc_info=True
-                        )
-                        # 重新抛出编程错误，以便快速失败
-                        raise
-                    else:
-                        self.logger.error(f"工作线程执行未预期异常 [{error_type}]: {e}", exc_info=True)
+                    if self._handle_task_exception(e, thread_name):
+                        break
         finally:
-            # 设置线程退出事件，通知管理器线程已退出
             if thread_name in self._thread_exit_events:
                 self._thread_exit_events[thread_name].set()
-                # 清理退出事件引用
                 del self._thread_exit_events[thread_name]
             self.logger.debug("工作线程退出: %s", thread_name)
 

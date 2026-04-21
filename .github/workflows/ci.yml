@@ -27,7 +27,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        targets: ${{ matrix.os == 'ubuntu-latest' && 'x86_64-unknown-linux-gnu' || matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
+        targets: ${{ matrix.os == 'ubuntu-latest' && 'x86_64-unknown-linux-gnu' || matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -103,6 +103,16 @@ jobs:
           source .venv/bin/activate
         fi
         pytest tests/smoke/ -v --tb=short
+
+    - name: Run core tests
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          source .venv/Scripts/activate
+        else
+          source .venv/bin/activate
+        fi
+        pytest tests/ -v --tb=short --ignore=tests/performance -x
 
     - name: Run performance tests (optional)
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'

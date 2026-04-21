@@ -56,9 +56,7 @@ pub struct TaskStatusDict {
     pub worker_id: Option<String>,
 }
 
-// 由于 PyObject 不实现 Clone，我们需要手动实现 Clone
-// 注意：克隆时会丢失 result 字段（包含 PyObject），这通常是可以接受的，
-// 因为在清理和调整分片等场景中，我们不需要 result 字段
+// PyO3 0.23 中 Py<T> 不实现 Clone，需通过 clone_ref 在 GIL 下递增引用计数
 impl Clone for TaskStatusDict {
     fn clone(&self) -> Self {
         Self {
@@ -66,7 +64,9 @@ impl Clone for TaskStatusDict {
             submit_time: self.submit_time,
             start_time: self.start_time,
             end_time: self.end_time,
-            result: None,  // PyObject 无法安全克隆，设为 None
+            result: self.result.as_ref().map(|py_obj| {
+                Python::with_gil(|py| py_obj.clone_ref(py))
+            }),
             error: self.error.clone(),
             worker_id: self.worker_id.clone(),
         }
