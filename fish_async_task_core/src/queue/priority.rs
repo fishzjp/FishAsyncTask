@@ -1,11 +1,11 @@
 //! 优先级队列实现
 //!
 //! 使用 BinaryHeap 实现线程安全的优先级队列。
-//! 使用 Condvar 替代 busy-wait，使用 lazy deletion 优化 remove 操作。
+//! 使用双 Condvar（not_empty / not_full）实现 put/get 双向阻塞，
+//! 使用 lazy deletion 优化 remove 操作。
 
 use crate::types::PrioritizedTask;
 use parking_lot::{Condvar, Mutex};
-use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -19,14 +19,27 @@ struct QueueState {
     cancelled: HashSet<String>,
 }
 
+/// 队列同步原语：状态锁 + 双条件变量
+struct QueueSync {
+    state: Mutex<QueueState>,
+    /// get 等待此条件（有新任务时被通知）
+    not_empty: Condvar,
+    /// put 等待此条件（有空间腾出时被通知）
+    not_full: Condvar,
+}
+
 /// 优先级任务队列
 ///
-/// 线程安全的优先级队列，支持阻塞操作。
-/// 使用 Condvar 替代 busy-wait 实现高效阻塞获取。
-/// 使用 lazy deletion 避免重建整个堆。
+/// 线程安全的优先级队列，支持双向阻塞操作：
+/// - `put`：队列满时可阻塞等待空间（Condvar，支持超时）
+/// - `get`：队列空时可阻塞等待任务（Condvar，支持超时）
+///
+/// 空/满不抛异常，而是通过返回值表达（put → bool，get → Option），
+/// 由 Python 适配器统一映射为标准库 queue.Full / queue.Empty。
+/// 使用 lazy deletion 避免 remove 时重建整个堆。
 #[pyclass]
 pub struct PyPriorityTaskQueue {
-    state: Arc<(Mutex<QueueState>, Condvar)>,
+    sync: Arc<QueueSync>,
     maxsize: usize,
 }
 
@@ -45,7 +58,11 @@ impl PyPriorityTaskQueue {
         };
 
         Ok(Self {
-            state: Arc::new((Mutex::new(state), Condvar::new())),
+            sync: Arc::new(QueueSync {
+                state: Mutex::new(state),
+                not_empty: Condvar::new(),
+                not_full: Condvar::new(),
+            }),
             maxsize,
         })
     }
@@ -56,9 +73,12 @@ impl PyPriorityTaskQueue {
     ///     priority: 任务优先级
     ///     task_id: 任务ID
     ///     submit_time: 提交时间
-    ///     block: 是否阻塞等待队列有空间
-    ///     timeout: 超时时间（秒），None 表示无限等待
-    #[pyo3(signature = (priority, task_id, submit_time, block=true, _timeout=None))]
+    ///     block: 队列满时是否阻塞等待空间
+    ///     timeout: 阻塞等待的超时时间（秒），None 表示无限等待
+    ///
+    /// Returns:
+    ///     true 表示入队成功；false 表示队列满（非阻塞或等待超时）
+    #[pyo3(signature = (priority, task_id, submit_time, block=true, timeout=None))]
     fn put(
         &self,
         py: Python,
@@ -66,15 +86,30 @@ impl PyPriorityTaskQueue {
         task_id: String,
         submit_time: f64,
         block: bool,
-        _timeout: Option<f64>,
-    ) -> PyResult<()> {
+        timeout: Option<f64>,
+    ) -> PyResult<bool> {
         py.allow_threads(|| {
-            let (lock, cvar) = &*self.state;
-            let mut state = lock.lock();
+            let mut state = self.sync.state.lock();
 
-            // 检查队列是否已满
-            if self.maxsize > 0 && state.task_ids.len() >= self.maxsize && !block {
-                return Err(PyErr::new::<PyException, _>("Queue is full".to_string()));
+            if self.maxsize > 0 {
+                let deadline = timeout.map(|t| std::time::Instant::now() + Duration::from_secs_f64(t));
+                while state.task_ids.len() >= self.maxsize {
+                    if !block {
+                        return Ok(false);
+                    }
+                    match deadline {
+                        Some(dl) => {
+                            let now = std::time::Instant::now();
+                            if now >= dl {
+                                return Ok(false);
+                            }
+                            self.sync.not_full.wait_for(&mut state, dl - now);
+                        }
+                        None => {
+                            self.sync.not_full.wait(&mut state);
+                        }
+                    }
+                }
             }
 
             let task = PrioritizedTask {
@@ -84,53 +119,51 @@ impl PyPriorityTaskQueue {
             };
             state.queue.push(task);
             state.task_ids.insert(task_id);
-            cvar.notify_one();
-            Ok(())
+            self.sync.not_empty.notify_one();
+            Ok(true)
         })
     }
 
     /// 从队列获取任务ID
     ///
     /// Args:
-    ///     block: 是否阻塞等待队列有任务
-    ///     timeout: 超时时间（秒），None 表示无限等待
+    ///     block: 队列空时是否阻塞等待任务
+    ///     timeout: 阻塞等待的超时时间（秒），None 表示无限等待
     ///
     /// Returns:
-    ///     获取的任务ID
+    ///     Some(task_id) 表示获取成功；None 表示队列空（非阻塞或等待超时）
     #[pyo3(signature = (block=true, timeout=None))]
-    fn get(&self, py: Python, block: bool, timeout: Option<f64>) -> PyResult<String> {
+    fn get(&self, py: Python, block: bool, timeout: Option<f64>) -> PyResult<Option<String>> {
         py.allow_threads(|| {
-            let (lock, cvar) = &*self.state;
-            let mut state = lock.lock();
+            let mut state = self.sync.state.lock();
 
             if block {
-                let deadline = timeout.map(Duration::from_secs_f64).map(|d| {
-                    std::time::Instant::now() + d
-                });
+                let deadline = timeout.map(|t| std::time::Instant::now() + Duration::from_secs_f64(t));
 
                 loop {
                     if let Some(task_id) = pop_valid_task(&mut state) {
-                        return Ok(task_id);
+                        self.sync.not_full.notify_one();
+                        return Ok(Some(task_id));
                     }
 
                     match deadline {
                         Some(dl) => {
                             let now = std::time::Instant::now();
                             if now >= dl {
-                                return Err(PyErr::new::<PyException, _>("Queue is empty".to_string()));
+                                return Ok(None);
                             }
-                            let remaining = dl - now;
-                            cvar.wait_for(&mut state, remaining);
+                            self.sync.not_empty.wait_for(&mut state, dl - now);
                         }
                         None => {
-                            cvar.wait(&mut state);
+                            self.sync.not_empty.wait(&mut state);
                         }
                     }
                 }
             } else if let Some(task_id) = pop_valid_task(&mut state) {
-                Ok(task_id)
+                self.sync.not_full.notify_one();
+                Ok(Some(task_id))
             } else {
-                Err(PyErr::new::<PyException, _>("Queue is empty".to_string()))
+                Ok(None)
             }
         })
     }
@@ -145,11 +178,12 @@ impl PyPriorityTaskQueue {
     /// Returns:
     ///     是否成功移除
     fn remove(&self, task_id: &str) -> PyResult<bool> {
-        let (lock, _) = &*self.state;
-        let mut state = lock.lock();
+        let mut state = self.sync.state.lock();
 
         if state.task_ids.remove(task_id) {
             state.cancelled.insert(task_id.to_string());
+            // 逻辑容量已释放（task_ids 决定 full 判定），唤醒等待空间的 put
+            self.sync.not_full.notify_one();
             Ok(true)
         } else {
             Ok(false)
@@ -158,15 +192,13 @@ impl PyPriorityTaskQueue {
 
     /// 获取队列大小
     fn qsize(&self) -> PyResult<usize> {
-        let (lock, _) = &*self.state;
-        let state = lock.lock();
+        let state = self.sync.state.lock();
         Ok(state.task_ids.len())
     }
 
     /// 检查队列是否为空
     fn empty(&self) -> PyResult<bool> {
-        let (lock, _) = &*self.state;
-        let state = lock.lock();
+        let state = self.sync.state.lock();
         Ok(state.task_ids.is_empty())
     }
 
@@ -175,19 +207,18 @@ impl PyPriorityTaskQueue {
         if self.maxsize == 0 {
             return Ok(false);
         }
-        let (lock, _) = &*self.state;
-        let state = lock.lock();
+        let state = self.sync.state.lock();
         Ok(state.task_ids.len() >= self.maxsize)
     }
 
     /// 清空队列
     fn clear(&self) -> PyResult<()> {
-        let (lock, cvar) = &*self.state;
-        let mut state = lock.lock();
+        let mut state = self.sync.state.lock();
         state.queue.clear();
         state.task_ids.clear();
         state.cancelled.clear();
-        cvar.notify_all();
+        // 一次释放全部容量，必须唤醒所有等待空间的 put
+        self.sync.not_full.notify_all();
         Ok(())
     }
 
@@ -197,11 +228,10 @@ impl PyPriorityTaskQueue {
     ///     items: (priority, task_id, submit_time) 元组列表
     ///
     /// Returns:
-    ///     成功添加的数量
+    ///     成功添加的数量（队列满时提前停止，不阻塞）
     fn put_batch(&self, py: Python, items: Vec<(i32, String, f64)>) -> PyResult<usize> {
         py.allow_threads(|| {
-            let (lock, cvar) = &*self.state;
-            let mut state = lock.lock();
+            let mut state = self.sync.state.lock();
             let mut count = 0;
 
             for (priority, task_id, submit_time) in items {
@@ -220,7 +250,7 @@ impl PyPriorityTaskQueue {
             }
 
             if count > 0 {
-                cvar.notify_all();
+                self.sync.not_empty.notify_all();
             }
 
             Ok(count)
@@ -237,8 +267,7 @@ impl PyPriorityTaskQueue {
     #[pyo3(signature = (max_count=None))]
     fn get_batch(&self, py: Python, max_count: Option<usize>) -> PyResult<Vec<String>> {
         py.allow_threads(|| {
-            let (lock, _) = &*self.state;
-            let mut state = lock.lock();
+            let mut state = self.sync.state.lock();
             let mut result = Vec::new();
             let limit = max_count.unwrap_or(usize::MAX);
 
@@ -247,6 +276,11 @@ impl PyPriorityTaskQueue {
                     Some(task_id) => result.push(task_id),
                     None => break,
                 }
+            }
+
+            if !result.is_empty() {
+                // 批量腾出多个空位，唤醒所有等待空间的 put
+                self.sync.not_full.notify_all();
             }
 
             Ok(result)

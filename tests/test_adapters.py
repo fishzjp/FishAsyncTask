@@ -347,7 +347,6 @@ class TestRustPriorityTaskQueueAdapter:
         """测试初始化"""
         adapter = _RustPriorityTaskQueueAdapter(maxsize=100)
         assert adapter._rust is not None
-        assert adapter._tasks == {}
 
     def test_put_and_get(self):
         """测试添加和获取任务"""

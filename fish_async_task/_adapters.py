@@ -2,8 +2,10 @@
 Python/Rust 统一适配器
 
 提供统一的接口，自动选择 Rust 或 Python 实现。
+队列空/满统一抛标准库 queue.Empty / queue.Full。
 """
 
+import queue as _stdlib_queue
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from .types import TaskStatusDict
@@ -220,11 +222,11 @@ class PriorityTaskQueueAdapter:
     def put(
         self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None
     ) -> None:
-        """向队列添加任务"""
+        """向队列添加任务；队列满（非阻塞或等待超时）抛 queue.Full"""
         raise NotImplementedError
 
     def get(self, block: bool = True, timeout: Optional[float] = None) -> str:
-        """从队列获取任务ID"""
+        """从队列获取任务ID；队列空（非阻塞或等待超时）抛 queue.Empty"""
         raise NotImplementedError
 
     def qsize(self) -> int:
@@ -239,27 +241,32 @@ class PriorityTaskQueueAdapter:
         """检查队列是否已满"""
         raise NotImplementedError
 
+    def clear(self) -> None:
+        """清空队列"""
+        raise NotImplementedError
+
 
 class _RustPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
     """Rust 优先级队列适配器"""
 
     def __init__(self, maxsize: int) -> None:
-        import time
-
         self._rust: "PyPriorityTaskQueue" = PyPriorityTaskQueue(maxsize)  # type: ignore[name-defined]
-        self._tasks: Dict[str, Tuple[int, str, float]] = {}  # task_id -> (priority, task_id, submit_time)
 
     def put(
         self, task_id: str, priority: int, block: bool = True, timeout: Optional[float] = None
     ) -> None:
         import time
 
-        submit_time = time.time()
-        self._tasks[task_id] = (priority, task_id, submit_time)
-        self._rust.put(priority, task_id, submit_time, block, timeout)
+        # Rust 侧满/超时返回 False，映射为标准库 queue.Full
+        if not self._rust.put(priority, task_id, time.time(), block, timeout):
+            raise _stdlib_queue.Full()
 
     def get(self, block: bool = True, timeout: Optional[float] = None) -> str:
-        return self._rust.get(block, timeout)
+        # Rust 侧空/超时返回 None，映射为标准库 queue.Empty
+        task_id = self._rust.get(block, timeout)
+        if task_id is None:
+            raise _stdlib_queue.Empty()
+        return task_id
 
     def qsize(self) -> int:
         return self._rust.qsize()
@@ -269,6 +276,9 @@ class _RustPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
 
     def full(self) -> bool:
         return self._rust.full()
+
+    def clear(self) -> None:
+        self._rust.clear()
 
 
 class _PythonPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
@@ -307,6 +317,9 @@ class _PythonPriorityTaskQueueAdapter(PriorityTaskQueueAdapter):
 
     def full(self) -> bool:
         return self._inner.full()
+
+    def clear(self) -> None:
+        self._inner.clear()
 
 
 def get_sharded_status_store(shard_count: int = 16, ttl: int = 3600) -> ShardedTaskStatusAdapter:
