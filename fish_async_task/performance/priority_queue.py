@@ -389,6 +389,12 @@ class TaskDependencyManager:
         with self._lock:
             self._failed_tasks.add(task_id)
 
+    def _is_ready_locked(self, task_id: str) -> bool:
+        """检查任务是否就绪（调用方必须已持有 self._lock）"""
+        if task_id not in self._dependencies:
+            return True
+        return self._dependencies[task_id].issubset(self._completed_tasks)
+
     def is_ready(self, task_id: str) -> bool:
         """
         检查任务是否就绪（所有依赖已满足）
@@ -400,11 +406,7 @@ class TaskDependencyManager:
             bool: 任务是否就绪
         """
         with self._lock:
-            if task_id not in self._dependencies:
-                return True
-
-            deps = self._dependencies[task_id]
-            return deps.issubset(self._completed_tasks)
+            return self._is_ready_locked(task_id)
 
     def get_ready_tasks(self) -> List[str]:
         """
@@ -414,11 +416,7 @@ class TaskDependencyManager:
             List[str]: 就绪的任务ID列表
         """
         with self._lock:
-            ready = []
-            for task_id in self._dependencies:
-                if self.is_ready(task_id):
-                    ready.append(task_id)
-            return ready
+            return [tid for tid in self._dependencies if self._is_ready_locked(tid)]
 
     def has_circular_dependency(self, task_id: str) -> bool:
         """

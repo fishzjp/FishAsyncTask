@@ -61,6 +61,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-benchmark>=4.0.0",
+    "pytest-timeout>=2.0.0",
     "locust>=2.0.0",
     "black>=23.0.0",
     "isort>=5.0.0",
@@ -88,6 +89,7 @@ filterwarnings = [
 ]
 markers = [
     "smoke: 冒烟测试，快速验证核心功能",
+    "slow: 长时间运行的测试",
 ]
 
 [tool.mypy]

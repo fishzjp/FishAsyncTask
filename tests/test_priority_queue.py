@@ -524,6 +524,7 @@ class TestPriorityTaskManager:
         assert task3.priority == 3
 
 
+@pytest.mark.timeout(20)
 class TestTaskDependencyManager:
     """测试 TaskDependencyManager 类"""
 
@@ -609,10 +610,14 @@ class TestTaskDependencyManager:
 
         manager.mark_completed("task_a")
 
+        # task_a 完成后：仅依赖 task_a 的 task1/task4 就绪，无依赖的 task2 就绪，
+        # task3 仍等待 task_b。
+        # （历史注：此测试曾因 get_ready_tasks 持锁重入死锁而从未执行到断言，
+        # 旧断言中 task1 与 task4 依赖相同却期望不同，属自相矛盾。）
         ready = manager.get_ready_tasks()
+        assert "task1" in ready
         assert "task2" in ready
         assert "task4" in ready
-        assert "task1" not in ready
         assert "task3" not in ready
 
     def test_has_circular_dependency_no_cycle(self):
