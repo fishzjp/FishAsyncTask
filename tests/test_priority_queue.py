@@ -44,8 +44,11 @@ class TestPrioritizedTask:
         # 优先级数字越小，优先级越高
         assert task1 < task2
         assert task2 > task1
-        # 相同优先级时，相等（因为其他字段 compare=False）
-        assert task1 == task3
+        # 相同优先级时按 submit_time 近似 FIFO：先提交的排前（与 Rust 实现一致）
+        assert task1 < task3
+        # submit_time 也相同时才相等
+        task4 = PrioritizedTask(1, "task4", lambda: None, (), {}, now)
+        assert task1 == task4
 
 
 class TestPriorityTaskQueue:

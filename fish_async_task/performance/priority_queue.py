@@ -20,6 +20,8 @@ class PrioritizedTask:
     带优先级的任务
 
     优先级数字越小，优先级越高。
+    同优先级按 submit_time 近似 FIFO（与 Rust 实现语义一致；
+    同一时钟刻度内提交的任务顺序不保证）。
     """
 
     priority: int
@@ -27,7 +29,7 @@ class PrioritizedTask:
     func: Callable = field(compare=False)
     args: tuple = field(compare=False)
     kwargs: dict = field(compare=False)
-    submit_time: float = field(compare=False, default_factory=time.time)
+    submit_time: float = field(compare=True, default_factory=time.time)
 
 
 class PriorityTaskQueue:
@@ -58,21 +60,27 @@ class PriorityTaskQueue:
 
         Args:
             task: 优先级任务
-            block: 是否阻塞
-            timeout: 超时时间
+            block: 队列满时是否阻塞等待空间
+            timeout: 阻塞等待的超时时间（秒），None 表示无限等待
 
         Raises:
-            queue.Full: 队列满且阻塞超时
+            queue.Full: 队列满（非阻塞模式，或阻塞等待超时）
         """
         with self._not_full:
             if self.maxsize > 0:
                 if not block:
                     if len(self._queue) >= self.maxsize:
                         raise queue.Full()
+                else:
+                    deadline = None if timeout is None else time.monotonic() + timeout
                     while len(self._queue) >= self.maxsize:
-                        self._not_full.wait(timeout=timeout)
-                        if len(self._queue) >= self.maxsize:
-                            raise queue.Full()
+                        if deadline is None:
+                            self._not_full.wait()
+                        else:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise queue.Full()
+                            self._not_full.wait(timeout=remaining)
 
             heapq.heappush(self._queue, task)
             self._task_ids.add(task.task_id)
@@ -87,24 +95,29 @@ class PriorityTaskQueue:
         获取最高优先级任务
 
         Args:
-            block: 是否阻塞
-            timeout: 超时时间
+            block: 队列空时是否阻塞等待任务
+            timeout: 阻塞等待的超时时间（秒），None 表示无限等待
 
         Returns:
             PrioritizedTask: 优先级任务
 
         Raises:
-            queue.Empty: 队列空且阻塞超时
+            queue.Empty: 队列空（非阻塞模式，或阻塞等待超时）
         """
         with self._not_empty:
             if not block:
                 if not self._queue:
                     raise queue.Empty()
             else:
+                deadline = None if timeout is None else time.monotonic() + timeout
                 while not self._queue:
-                    self._not_empty.wait(timeout=timeout)
-                    if not self._queue:
-                        raise queue.Empty()
+                    if deadline is None:
+                        self._not_empty.wait()
+                    else:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise queue.Empty()
+                        self._not_empty.wait(timeout=remaining)
 
             task = heapq.heappop(self._queue)
             self._task_ids.discard(task.task_id)
