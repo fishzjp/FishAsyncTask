@@ -22,7 +22,7 @@
 ## 特性
 
 ### 核心功能
-- 🚀 **Rust 核心实现（默认）**：状态存储和优先级队列使用 Rust 实现，性能提升 2-4x
+- 🚀 **Rust 核心实现（默认）**：状态存储和优先级队列使用 Rust 实现，并发场景提升 1.2-2.2x（见下方性能基线）
 - 🔄 **动态伸缩**：根据任务队列大小自动调整工作线程数量
 - 📊 **任务状态追踪**：实时查询任务执行状态和结果
 - 🧹 **自动清理**：自动清理过期的任务状态记录
@@ -49,11 +49,21 @@ Rust 核心实现相比纯 Python 实现的性能提升：
 
 | 操作 | Python | Rust | 加速比 |
 |------|--------|------|--------|
+| 顺序状态写入 | 1.79M ops/s | 1.93M ops/s | **1.08x** |
 | 并发状态写入 | 1.47M ops/s | 1.79M ops/s | **1.22x** |
 | 并发状态读取 | 1.07M QPS | 1.38M QPS | **1.29x** |
 | 队列入队 | 603K ops/s | 1.30M ops/s | **2.16x** |
 | 队列出队 | 705K ops/s | 1.30M ops/s | **1.85x** |
-| 内存占用 (5K任务) | 1,432 KB | 0.3 KB | **~100% 节省** |
+
+**测量方法与局限**：
+
+- 以上为组件级微基准（macOS/aarch64, Python 3.11），端到端提交吞吐约 92K tasks/s——
+  状态存储与队列仅占整体开销的一小部分，实际应用中的端到端收益远小于组件加速比。
+- 顺序（单线程）操作提升有限：PyO3 跨语言调用开销在小规模操作中占主导，
+  Rust 的优势主要体现在多线程并发场景。
+- 内存对比方面，早期版本宣称的"~100% 节省"来自 tracemalloc 测量，
+  该工具只统计 Python 堆分配，Rust 侧内存不在其视野内，绝对数字不可比。
+  Rust 结构体确实比 Python dict 紧凑，但真实节省幅度需以进程 RSS 口径测量。
 
 详细性能数据请参考 [性能基线报告](tests/performance/rust_baseline/baseline_summary.md)
 
@@ -180,11 +190,13 @@ payment_manager = TaskManager(instance_key="payment")
 ### 使用优先级队列
 
 ```python
-# 高优先级任务会优先执行
+# 高优先级任务会优先执行（数字越小优先级越高，默认为 5）
 task_manager.submit_task(high_priority_task, priority=1)
 task_manager.submit_task(normal_task, priority=5)
 task_manager.submit_task(low_priority_task, priority=10)
 ```
+
+`priority` 是 `submit_task` 的保留关键字参数，不会传递给任务函数。
 
 ## 文档
 

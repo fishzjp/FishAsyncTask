@@ -2,12 +2,36 @@
 
 所有值得注意的项目变更都将记录在此文件中。
 
-## [0.3.1] - 2026-03-05
+## [Unreleased]
 
 ### 新增
-- 完整的跨平台 wheel 支持（Linux, macOS, Windows）
-- CI/CD 自动化发布流程
-- 冒烟测试套件，快速验证核心功能
+- `submit_task` 新增 `priority` 关键字参数，优先级队列正式接入主流程
+  （此前 README 已宣传该用法，但 `priority` 实际会被透传给任务函数，
+  不产生任何调度效果）
+
+### 行为变更
+- `priority` 成为 `submit_task` 的保留关键字参数，不再透传给任务函数；
+  任务函数如需同名参数请改名
+- `TaskManager.task_queue` 属性类型由 `queue.Queue` 变为 `TaskChannel`
+  （接口兼容：get/put/put_nowait/qsize/empty/full/task_done 均可用）；
+  依赖 `isinstance(tm.task_queue, queue.Queue)` 的代码需调整
+- 任务出队顺序由严格 FIFO 变为优先级排序；同优先级按提交时间近似 FIFO
+  （同一时钟刻度内提交的任务顺序不保证）
+
+### 修复
+- 修复 `TaskDependencyManager.get_ready_tasks()` 持锁重入导致的死锁
+- 修复 Rust 优先级队列 `put(block=True)` 在队列满时不阻塞、
+  直接超容入队的缺陷（`maxsize` 此前形同虚设），并支持 `timeout`
+- 修复纯 Python 优先级队列 `put/get` 阻塞与超时语义错误
+- 修复 Rust 优先级队列适配器 `_tasks` 字典只增不减的内存泄漏
+- 队列空/满异常统一为标准库 `queue.Empty` / `queue.Full`
+
+### 文档
+- 修正 README 性能表述与自家基线数据不符的问题（"2-4x" → 实测 1.08-2.16x）
+- 澄清内存对比的测量口径：tracemalloc 只统计 Python 堆，
+  不能得出"~100% 节省"的结论
+
+## [0.3.1] - 2026-03-05
 
 ### 新增
 - 完整的跨平台 wheel 支持（Linux, macOS, Windows）
