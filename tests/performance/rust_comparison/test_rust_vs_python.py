@@ -236,23 +236,45 @@ class TestStatusReadLatencyComparison:
 
 
 class TestMemoryUsageComparison:
-    """内存使用对比"""
+    """内存使用对比
+
+    双口径测量：
+    - tracemalloc：只统计 Python 分配器管理的堆内存。Rust 实现的数据
+      存储在 Rust 侧堆上，不在其视野内，因此 Rust 的 tracemalloc 数字
+      接近 0 是测量盲区，不代表真实内存占用。
+    - RSS 差值：进程常驻内存的前后差，跨语言可比，但受分配器缓存、
+      页对齐等噪声影响，适合看量级而非精确值。
+    """
+
+    @staticmethod
+    def _rss_kb() -> float:
+        """当前进程 RSS（KB）"""
+        import psutil
+
+        return psutil.Process().memory_info().rss / 1024
 
     def test_status_storage_memory(self):
-        """对比状态存储的内存占用"""
+        """对比状态存储的内存占用（tracemalloc + RSS 双口径）"""
+        import gc
         import tracemalloc
 
         count = 5000
 
         # 测试 Rust 实现
+        gc.collect()
+        rss_before_rust = self._rss_kb()
         tracemalloc.start()
         rust_store = get_sharded_status_store(shard_count=16, ttl=3600)
         for i in range(count):
             rust_store.update_status(f"task_{i}", {"status": "pending", "submit_time": time.time()})
         rust_memory = tracemalloc.get_traced_memory()[0] / 1024  # KB
         tracemalloc.stop()
+        gc.collect()
+        rust_rss_delta = self._rss_kb() - rss_before_rust
 
         # 测试 Python 实现
+        gc.collect()
+        rss_before_python = self._rss_kb()
         tracemalloc.start()
         python_store = ShardedTaskStatusWithExpiry(shard_count=16, ttl=3600)
         for i in range(count):
@@ -261,17 +283,25 @@ class TestMemoryUsageComparison:
             )
         python_memory = tracemalloc.get_traced_memory()[0] / 1024  # KB
         tracemalloc.stop()
+        gc.collect()
+        python_rss_delta = self._rss_kb() - rss_before_python
 
         per_entry_rust = rust_memory / count
         per_entry_python = python_memory / count
-        memory_reduction = (
-            (python_memory - rust_memory) / python_memory * 100 if python_memory > 0 else 0
-        )
 
         print(f"\n[性能对比] 内存占用 ({count} 条目):")
+        print(f"  -- tracemalloc 口径（仅 Python 堆，Rust 侧分配不可见）--")
         print(f"  Rust:   {rust_memory:.1f} KB ({per_entry_rust:.2f} Bytes/条目)")
         print(f"  Python: {python_memory:.1f} KB ({per_entry_python:.2f} Bytes/条目)")
-        print(f"  节省:   {memory_reduction:.1f}%")
+        print(f"  -- RSS 差值口径（跨语言可比，含分配器噪声）--")
+        print(f"  Rust:   {rust_rss_delta:.1f} KB ({rust_rss_delta * 1024 / count:.1f} Bytes/条目)")
+        print(f"  Python: {python_rss_delta:.1f} KB ({python_rss_delta * 1024 / count:.1f} Bytes/条目)")
+
+        # sanity：Rust 侧真实占用不为零——5000 条目必然产生可观测的 RSS 增长
+        assert rust_rss_delta > 0, "Rust 存储的 RSS 增长应大于 0（tracemalloc 的 ~0 是盲区假象）"
+
+        # 保持引用，避免提前被 GC 影响测量
+        del rust_store, python_store
 
 
 class TestPriorityQueueComparison:
