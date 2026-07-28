@@ -15,9 +15,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def process_order(order_id: int, priority: str = "normal"):
-    """处理订单任务"""
-    logger.info(f"开始处理订单 {order_id}, 优先级: {priority}")
+def process_order(order_id: int, urgency: str = "normal"):
+    """处理订单任务
+
+    注意：priority 是 submit_task 的保留关键字参数（任务调度优先级），
+    不会传递给任务函数；业务层面的"紧急程度"这里改用 urgency 表示。
+    """
+    logger.info(f"开始处理订单 {order_id}, 紧急程度: {urgency}")
     time.sleep(0.5)
     result = f"订单 {order_id} 处理完成"
     logger.info(result)
@@ -43,7 +47,8 @@ def main():
         task_id = task_manager.submit_task(
             process_order,
             order_id=i + 1,
-            priority="high"
+            urgency="high",  # 传给任务函数的业务参数
+            priority=1,      # 调度优先级：数字越小越先执行（保留参数）
         )
         task_ids.append(task_id)
         logger.info(f"已提交任务，ID: {task_id}")

@@ -194,9 +194,12 @@ def test_task_dependency_manager():
     ready = dep_manager.get_ready_tasks()
     assert "task_C" in ready, "task_C 应该在就绪列表中"
 
-    # 测试循环依赖检测
+    # 测试循环依赖检测（A→C→A 构成环）
+    # 历史注：此测试曾因 get_ready_tasks 死锁从未执行到这里；
+    # 旧断言只加了 A→C 单向依赖（无环）却期望检测到环，属断言错误
     dep_manager2 = TaskDependencyManager()
     dep_manager2.add_dependency("task_A", ["task_C"])
+    dep_manager2.add_dependency("task_C", ["task_A"])
     has_cycle = dep_manager2.has_circular_dependency("task_A")
     assert has_cycle, "应该检测到循环依赖"
 
