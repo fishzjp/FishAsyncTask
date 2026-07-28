@@ -174,8 +174,10 @@ def test_queue_full():
     task_manager.worker_manager.wait_for_threads_exit(task_manager.DEFAULT_THREAD_JOIN_TIMEOUT)
 
     # 重新创建一个小队列便于测试
+    from fish_async_task.task_channel import TaskChannel
+
     original_queue = task_manager.task_queue
-    task_manager.task_queue = queue.Queue(maxsize=5)
+    task_manager.task_queue = TaskChannel(maxsize=5)
 
     # 填满队列
     task_ids = []

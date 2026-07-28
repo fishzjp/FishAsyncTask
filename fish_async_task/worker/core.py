@@ -10,10 +10,13 @@ import queue
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from ..types import TaskTuple
 from .adaptive import AdaptiveWorkerManager
+
+if TYPE_CHECKING:
+    from ..task_channel import TaskChannel
 
 
 class WorkerManager:
@@ -48,7 +51,7 @@ class WorkerManager:
     def __init__(
         self,
         logger: logging.Logger,
-        task_queue: "queue.Queue[TaskTuple]",
+        task_queue: "TaskChannel",
         worker_threads: List[threading.Thread],
         threads_lock: threading.Lock,
         running_event: threading.Event,

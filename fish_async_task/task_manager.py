@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .cleanup import CleanupThreadManager
 from .config import ConfigLoader
+from .task_channel import _SHUTDOWN_PRIORITY, TaskChannel
 from .task_status import TaskStatusManager
 from .types import TaskStatusDict, TaskTuple
 from .worker import TaskExecutor, WorkerManager
@@ -38,6 +39,7 @@ class TaskManager:
     DEFAULT_CLEANUP_INTERVAL = 300  # 5分钟
     DEFAULT_THREAD_JOIN_TIMEOUT = 2  # 秒
     DEFAULT_TASK_TIMEOUT = None  # 默认无超时限制
+    DEFAULT_TASK_PRIORITY = 5  # 默认任务优先级（数字越小优先级越高）
 
     # 工作线程配置常量
     DEFAULT_MIN_MAX_WORKERS = 4  # 最大工作线程数的最小值
@@ -140,8 +142,9 @@ class TaskManager:
 
     def _init_basic_structures(self) -> None:
         """初始化基础数据结构"""
-        self.task_queue: "queue.Queue[TaskTuple]" = queue.Queue(
-            maxsize=self.DEFAULT_QUEUE_SIZE
+        self.task_queue: TaskChannel = TaskChannel(
+            maxsize=self.DEFAULT_QUEUE_SIZE,
+            default_priority=self.DEFAULT_TASK_PRIORITY,
         )
         self.worker_threads: List[threading.Thread] = []
         self.threads_lock = threading.Lock()
@@ -312,13 +315,14 @@ class TaskManager:
         *args: Any,
         block: bool = False,
         timeout: Optional[float] = None,
+        priority: Optional[int] = None,
         **kwargs: Any,
     ) -> str:
         """
         提交任务到任务队列
 
         此方法是线程安全的，可以在多个线程中并发调用。
-        任务会被添加到队列中，由工作线程异步执行。
+        任务会被添加到队列中，由工作线程按优先级异步执行。
 
         Args:
             func: 要执行的任务函数
@@ -326,6 +330,9 @@ class TaskManager:
             block: 如果队列已满，是否阻塞等待。默认为 False。
             timeout: 阻塞等待的超时时间（秒）。仅在 block=True 时有效。
                      如果为 None，则无限等待。默认为 None。
+            priority: 任务优先级，数字越小优先级越高。默认为 None
+                     （使用 DEFAULT_TASK_PRIORITY = 5）。有效范围
+                     [0, 2**31 - 2]。同优先级任务按提交时间近似 FIFO。
             **kwargs: 任务函数的关键字参数
 
         Returns:
@@ -333,9 +340,12 @@ class TaskManager:
 
         Raises:
             TaskQueueFullError: 当队列已满且 block=False 时抛出
+            ValueError: priority 不是 int 或超出有效范围
 
         Note:
             - 任务函数应该是线程安全的
+            - block、timeout、priority 是保留关键字参数，不会传递给任务函数；
+              任务函数如需同名参数请通过 functools.partial 或改名规避
             - 如果 block=False 且队列已满，会抛出 TaskQueueFullError 异常
             - 如果 block=True，会阻塞等待直到队列有空间或超时
             - 提交后任务状态为"pending"，执行时变为"running"，完成后变为"completed"或"failed"
@@ -348,18 +358,32 @@ class TaskManager:
             >>> # 非阻塞模式提交任务
             >>> task_id = manager.submit_task(my_task, "task1", value=100)
             >>>
+            >>> # 高优先级任务（数字越小优先级越高）
+            >>> task_id = manager.submit_task(my_task, "urgent", value=1, priority=1)
+            >>>
             >>> # 阻塞模式提交任务（最多等待10秒）
             >>> task_id = manager.submit_task(
             ...     my_task, "task2", value=200, block=True, timeout=10.0
             ... )
         """
+        if priority is not None:
+            if not isinstance(priority, int) or isinstance(priority, bool):
+                raise ValueError(f"priority 必须是 int，实际: {type(priority).__name__}")
+            # 上界排除关闭哨兵的保留优先级（i32 最大值）
+            if not (0 <= priority < _SHUTDOWN_PRIORITY):
+                raise ValueError(
+                    f"priority 超出有效范围 [0, {_SHUTDOWN_PRIORITY - 1}]，实际: {priority}"
+                )
+
         task_id = str(uuid.uuid4())
 
         try:
-            if block:
-                self.task_queue.put((task_id, func, args, kwargs), timeout=timeout)
-            else:
-                self.task_queue.put_nowait((task_id, func, args, kwargs))
+            self.task_queue.put_task(
+                (task_id, func, args, kwargs),
+                priority=priority,
+                block=block,
+                timeout=timeout,
+            )
         except queue.Full:
             error_msg = f"任务队列已满，无法提交任务 {task_id}"
             self.logger.error(error_msg)
@@ -465,6 +489,8 @@ class TaskManager:
         # 清理资源（在所有线程退出后再清理）
         with self.threads_lock:
             self.worker_threads.clear()
+        # 清空任务通道（队列 + 载荷表），避免单例实例残留跨生命周期泄漏
+        self.task_queue.clear()
         self.status_manager.clear_task_status()
         self.logger.info("任务管理器已关闭")
 
